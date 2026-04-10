@@ -8,4 +8,4 @@ pub use content::{Content, Format};
 pub use knowledge::Knowledge;
 pub use query::{QueryOpts, QueryResult, QueryTarget, ResultSetRow, SearchOpts};
 pub use shelf::{ShelfConfig, ShelfId};
-pub use statement::{Statement, StatementKey};
+pub use statement::{Statement, StatementKey, csv_split};

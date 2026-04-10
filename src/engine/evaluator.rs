@@ -127,83 +127,18 @@ fn query_opts_to_search_opts(opts: &QueryOpts, target: QueryTarget) -> SearchOpt
 
 /// Build a SQL condition that matches keys from FTS results against the target table.
 /// For Knowledge: `name IN (?, ?, ...)`
-/// For Statement: decompose each CSV key into `(subject=? AND predicate=? AND object=?)` and OR them together.
+/// For Statement: `triple IN (?, ?, ...)`
 fn build_key_match_condition(target: QueryTarget, keys: &[String]) -> (String, Vec<serde_json::Value>) {
-    match target {
-        QueryTarget::Knowledge => {
-            let params: Vec<serde_json::Value> = keys.iter()
-                .map(|k| serde_json::Value::String(k.clone()))
-                .collect();
-            let placeholders: Vec<&str> = keys.iter().map(|_| "?").collect();
-            let in_clause = placeholders.join(", ");
-            (format!("name IN ({in_clause})"), params)
-        }
-        QueryTarget::Statement => {
-            // Each key is a CSV-formatted "subject,predicate,object" triple.
-            // Decompose into: ((subject=? AND predicate=? AND object=?) OR ...)
-            let mut all_params = Vec::new();
-            let mut or_clauses = Vec::new();
-
-            for key in keys {
-                if let Some((s, p, o)) = parse_csv_triple(key) {
-                    or_clauses.push("(subject = ? AND predicate = ? AND object = ?)".to_string());
-                    all_params.push(serde_json::Value::String(s));
-                    all_params.push(serde_json::Value::String(p));
-                    all_params.push(serde_json::Value::String(o));
-                }
-                // If the key can't be parsed as a triple, skip it
-            }
-
-            if or_clauses.is_empty() {
-                ("1=0".to_string(), Vec::new())
-            } else {
-                (format!("({})", or_clauses.join(" OR ")), all_params)
-            }
-        }
-    }
-}
-
-/// Parse a CSV-formatted key like "Alice,knows,Bob" into (subject, predicate, object).
-/// Handles quoted fields containing commas.
-fn parse_csv_triple(key: &str) -> Option<(String, String, String)> {
-    let fields = csv_split(key);
-    if fields.len() == 3 {
-        Some((fields[0].clone(), fields[1].clone(), fields[2].clone()))
-    } else {
-        None
-    }
-}
-
-/// Split a CSV line respecting quoted fields.
-fn csv_split(s: &str) -> Vec<String> {
-    let mut result = Vec::new();
-    let mut current = String::new();
-    let mut in_quotes = false;
-    let mut chars = s.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if in_quotes {
-            if ch == '"' {
-                // Check for escaped quote ""
-                if chars.peek() == Some(&'"') {
-                    chars.next();
-                    current.push('"');
-                } else {
-                    in_quotes = false;
-                }
-            } else {
-                current.push(ch);
-            }
-        } else if ch == '"' {
-            in_quotes = true;
-        } else if ch == ',' {
-            result.push(std::mem::take(&mut current));
-        } else {
-            current.push(ch);
-        }
-    }
-    result.push(current);
-    result
+    let pk_column = match target {
+        QueryTarget::Knowledge => "name",
+        QueryTarget::Statement => "triple",
+    };
+    let params: Vec<serde_json::Value> = keys.iter()
+        .map(|k| serde_json::Value::String(k.clone()))
+        .collect();
+    let placeholders: Vec<&str> = keys.iter().map(|_| "?").collect();
+    let in_clause = placeholders.join(", ");
+    (format!("{pk_column} IN ({in_clause})"), params)
 }
 
 /// Convert an AST node back to a JSON value (for $quote).
@@ -315,15 +250,13 @@ mod tests {
     #[test]
     fn eval_search_inside_statement() {
         // $search inside $statement: FTS returns keys as CSV triples,
-        // which are decomposed into (subject=? AND predicate=? AND object=?) conditions
+        // which are matched via `triple IN (...)`
         let mut search_row = serde_json::Map::new();
         search_row.insert("key".to_string(), json!("Alice,knows,Bob"));
         search_row.insert("catalog".to_string(), json!("statement"));
 
         let mut query_row = serde_json::Map::new();
-        query_row.insert("subject".to_string(), json!("Alice"));
-        query_row.insert("predicate".to_string(), json!("knows"));
-        query_row.insert("object".to_string(), json!("Bob"));
+        query_row.insert("triple".to_string(), json!("Alice,knows,Bob"));
 
         let mock = MockStorage::with_search_results(vec![query_row], vec![search_row]);
         let result = Evaluator::execute(
@@ -355,41 +288,22 @@ mod tests {
     }
 
     #[test]
-    fn csv_split_simple() {
-        assert_eq!(csv_split("Alice,knows,Bob"), vec!["Alice", "knows", "Bob"]);
+    fn build_key_match_knowledge() {
+        let (sql, params) = build_key_match_condition(
+            QueryTarget::Knowledge,
+            &["rust".to_string(), "go".to_string()],
+        );
+        assert_eq!(sql, "name IN (?, ?)");
+        assert_eq!(params.len(), 2);
     }
 
     #[test]
-    fn csv_split_quoted() {
-        assert_eq!(csv_split("\"Alice, Jr.\",knows,Bob"), vec!["Alice, Jr.", "knows", "Bob"]);
-    }
-
-    #[test]
-    fn csv_split_escaped_quote() {
-        assert_eq!(csv_split("\"Alice \"\"Al\"\"\",knows,Bob"), vec!["Alice \"Al\"", "knows", "Bob"]);
-    }
-
-    #[test]
-    fn parse_csv_triple_valid() {
-        let (s, p, o) = parse_csv_triple("Alice,knows,Bob").unwrap();
-        assert_eq!(s, "Alice");
-        assert_eq!(p, "knows");
-        assert_eq!(o, "Bob");
-    }
-
-    #[test]
-    fn parse_csv_triple_invalid() {
-        assert!(parse_csv_triple("only,two").is_none());
-    }
-
-    #[test]
-    fn build_key_match_statement_decomposition() {
+    fn build_key_match_statement() {
         let (sql, params) = build_key_match_condition(
             QueryTarget::Statement,
             &["Alice,knows,Bob".to_string(), "Charlie,likes,Rust".to_string()],
         );
-        assert!(sql.contains("subject = ? AND predicate = ? AND object = ?"));
-        assert!(sql.contains(" OR "));
-        assert_eq!(params.len(), 6); // 2 triples × 3 params each
+        assert_eq!(sql, "triple IN (?, ?)");
+        assert_eq!(params.len(), 2);
     }
 }

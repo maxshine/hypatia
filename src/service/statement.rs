@@ -24,7 +24,7 @@ impl<'a> StatementService<'a> {
 
         // Insert into FTS with CSV-formatted key
         let csv_key = key.to_csv_key();
-        let fts_content = content.fts_content(&format!("{} {} {}", key.subject, key.predicate, key.object));
+        let fts_content = content.fts_content(&key.to_csv_key());
         self.shelf.sqlite.upsert_doc("statement", &csv_key, &fts_content)?;
 
         let statement = self.shelf.duckdb.get_statement(key)?.ok_or_else(|| {
@@ -51,7 +51,7 @@ impl<'a> StatementService<'a> {
 
         // Update FTS
         let csv_key = key.to_csv_key();
-        let fts_content = content.fts_content(&format!("{} {} {}", key.subject, key.predicate, key.object));
+        let fts_content = content.fts_content(&key.to_csv_key());
         self.shelf.sqlite.upsert_doc("statement", &csv_key, &fts_content)?;
 
         let statement = self.shelf.duckdb.get_statement(key)?.ok_or_else(|| {

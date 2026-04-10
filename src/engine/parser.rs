@@ -10,7 +10,7 @@ const OPERATORS: &[&str] = &[
     "$search",
     "$gte", "$lte", "$gt", "$lt",
     "$eq", "$ne",
-    "$contains",
+    "$like", "$contains", "$content",
     "$quote",
 ];
 

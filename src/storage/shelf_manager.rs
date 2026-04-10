@@ -72,6 +72,7 @@ fn knowledge_to_row(k: &crate::model::Knowledge) -> serde_json::Map<String, serd
 
 fn statement_to_row(s: &crate::model::Statement) -> serde_json::Map<String, serde_json::Value> {
     let mut map = serde_json::Map::new();
+    map.insert("triple".to_string(), serde_json::Value::String(s.key.to_csv_key()));
     map.insert("subject".to_string(), serde_json::Value::String(s.key.subject.clone()));
     map.insert("predicate".to_string(), serde_json::Value::String(s.key.predicate.clone()));
     map.insert("object".to_string(), serde_json::Value::String(s.key.object.clone()));

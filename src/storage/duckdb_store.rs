@@ -15,15 +15,18 @@ CREATE TABLE IF NOT EXISTS knowledge (
 
 const STATEMENT_SCHEMA: &str = "\
 CREATE TABLE IF NOT EXISTS statement (
+    triple TEXT PRIMARY KEY,
     subject TEXT,
     predicate TEXT,
     object TEXT,
     content JSON,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     tr_start TIMESTAMP,
-    tr_end TIMESTAMP,
-    PRIMARY KEY (subject, predicate, object)
-)";
+    tr_end TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_stmt_subject ON statement(subject);
+CREATE INDEX IF NOT EXISTS idx_stmt_predicate ON statement(predicate);
+CREATE INDEX IF NOT EXISTS idx_stmt_object ON statement(object)";
 
 /// SQL fragment for selecting all knowledge columns with timestamps as strings.
 const KNOWLEDGE_SELECT: &str = "\
@@ -31,7 +34,7 @@ SELECT name, content, CAST(created_at AS VARCHAR) AS created_at FROM knowledge";
 
 /// SQL fragment for selecting all statement columns with timestamps as strings.
 const STATEMENT_SELECT: &str = "\
-SELECT subject, predicate, object, content, \
+SELECT triple, subject, predicate, object, content, \
        CAST(created_at AS VARCHAR) AS created_at, \
        CAST(tr_start AS VARCHAR) AS tr_start, \
        CAST(tr_end AS VARCHAR) AS tr_end FROM statement";
@@ -186,50 +189,49 @@ impl DuckDbStore {
         tr_end: Option<NaiveDateTime>,
     ) -> Result<()> {
         let json = content.to_json_string();
+        let triple = key.to_csv_key();
         let tr_start_str = tr_start.as_ref().map(format_timestamp);
         let tr_end_str = tr_end.as_ref().map(format_timestamp);
         self.conn
             .execute(
-                "INSERT INTO statement (subject, predicate, object, content, tr_start, tr_end) VALUES (?, ?, ?, ?, ?, ?)",
-                params![key.subject, key.predicate, key.object, json, tr_start_str, tr_end_str],
+                "INSERT INTO statement (triple, subject, predicate, object, content, tr_start, tr_end) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                params![triple, key.subject, key.predicate, key.object, json, tr_start_str, tr_end_str],
             )
             .map_err(StorageError::from)?;
         Ok(())
     }
 
     pub fn get_statement(&self, key: &StatementKey) -> Result<Option<Statement>> {
+        let triple = key.to_csv_key();
         let result = self
             .conn
             .query_row(
-                &format!("{STATEMENT_SELECT} WHERE subject = ? AND predicate = ? AND object = ?"),
-                params![key.subject, key.predicate, key.object],
+                &format!("{STATEMENT_SELECT} WHERE triple = ?"),
+                params![triple],
                 |row| {
-                    let subject: String = row.get(0)?;
-                    let predicate: String = row.get(1)?;
-                    let object: String = row.get(2)?;
-                    let json: String = row.get(3)?;
-                    let created_at_str: String = row.get(4)?;
-                    let tr_start_str: Option<String> = row.get(5)?;
-                    let tr_end_str: Option<String> = row.get(6)?;
-                    Ok((subject, predicate, object, json, created_at_str, tr_start_str, tr_end_str))
+                    let triple: String = row.get(0)?;
+                    let subject: String = row.get(1)?;
+                    let predicate: String = row.get(2)?;
+                    let object: String = row.get(3)?;
+                    let json: String = row.get(4)?;
+                    let created_at_str: String = row.get(5)?;
+                    let tr_start_str: Option<String> = row.get(6)?;
+                    let tr_end_str: Option<String> = row.get(7)?;
+                    Ok((triple, subject, predicate, object, json, created_at_str, tr_start_str, tr_end_str))
                 },
             )
             .optional()
             .map_err(StorageError::from)?;
 
         result
-            .map(|(subject, predicate, object, json, created_at_str, tr_start_str, tr_end_str)| {
+            .map(|(triple, subject, predicate, object, json, created_at_str, tr_start_str, tr_end_str)| {
                 let content = Content::from_json_str(&json)?;
                 let created_at = parse_timestamp(&created_at_str)?;
                 let tr_start = tr_start_str.as_deref().map(parse_timestamp).transpose()?;
                 let tr_end = tr_end_str.as_deref().map(parse_timestamp).transpose()?;
-                Ok(Statement {
-                    key: StatementKey { subject, predicate, object },
-                    content,
-                    created_at,
-                    tr_start,
-                    tr_end,
-                })
+                let key = StatementKey { subject, predicate, object };
+                let _ = triple; // triple is the PK, key is derived from columns
+                Ok(Statement { key, content, created_at, tr_start, tr_end })
             })
             .transpose()
     }
@@ -242,33 +244,35 @@ impl DuckDbStore {
         tr_end: Option<NaiveDateTime>,
     ) -> Result<()> {
         let json = content.to_json_string();
+        let triple = key.to_csv_key();
         let tr_start_str = tr_start.as_ref().map(format_timestamp);
         let tr_end_str = tr_end.as_ref().map(format_timestamp);
         let rows = self.conn.execute(
-            "UPDATE statement SET content = ?, tr_start = ?, tr_end = ? WHERE subject = ? AND predicate = ? AND object = ?",
-            params![json, tr_start_str, tr_end_str, key.subject, key.predicate, key.object],
+            "UPDATE statement SET content = ?, tr_start = ?, tr_end = ? WHERE triple = ?",
+            params![json, tr_start_str, tr_end_str, triple],
         ).map_err(StorageError::from)?;
         if rows == 0 {
             return Err(HypatiaError::NotFound {
                 kind: "statement".to_string(),
-                key: format!("({},{},{})", key.subject, key.predicate, key.object),
+                key: triple,
             });
         }
         Ok(())
     }
 
     pub fn delete_statement(&self, key: &StatementKey) -> Result<()> {
+        let triple = key.to_csv_key();
         let rows = self
             .conn
             .execute(
-                "DELETE FROM statement WHERE subject = ? AND predicate = ? AND object = ?",
-                params![key.subject, key.predicate, key.object],
+                "DELETE FROM statement WHERE triple = ?",
+                params![triple],
             )
             .map_err(StorageError::from)?;
         if rows == 0 {
             return Err(HypatiaError::NotFound {
                 kind: "statement".to_string(),
-                key: format!("({},{},{})", key.subject, key.predicate, key.object),
+                key: triple,
             });
         }
         Ok(())
@@ -286,32 +290,29 @@ impl DuckDbStore {
         let mut stmt = self.conn.prepare(sql).map_err(StorageError::from)?;
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| {
-                let subject: String = row.get(0)?;
-                let predicate: String = row.get(1)?;
-                let object: String = row.get(2)?;
-                let json: String = row.get(3)?;
-                let created_at_str: String = row.get(4)?;
-                let tr_start_str: Option<String> = row.get(5)?;
-                let tr_end_str: Option<String> = row.get(6)?;
-                Ok((subject, predicate, object, json, created_at_str, tr_start_str, tr_end_str))
+                let triple: String = row.get(0)?;
+                let subject: String = row.get(1)?;
+                let predicate: String = row.get(2)?;
+                let object: String = row.get(3)?;
+                let json: String = row.get(4)?;
+                let created_at_str: String = row.get(5)?;
+                let tr_start_str: Option<String> = row.get(6)?;
+                let tr_end_str: Option<String> = row.get(7)?;
+                Ok((triple, subject, predicate, object, json, created_at_str, tr_start_str, tr_end_str))
             })
             .map_err(StorageError::from)?;
 
         let mut result = Vec::new();
         for row in rows {
-            let (subject, predicate, object, json, created_at_str, tr_start_str, tr_end_str) =
+            let (triple, subject, predicate, object, json, created_at_str, tr_start_str, tr_end_str) =
                 row.map_err(StorageError::from)?;
             let content = Content::from_json_str(&json)?;
             let created_at = parse_timestamp(&created_at_str)?;
             let tr_start = tr_start_str.as_deref().map(parse_timestamp).transpose()?;
             let tr_end = tr_end_str.as_deref().map(parse_timestamp).transpose()?;
-            result.push(Statement {
-                key: StatementKey { subject, predicate, object },
-                content,
-                created_at,
-                tr_start,
-                tr_end,
-            });
+            let key = StatementKey { subject, predicate, object };
+            let _ = triple;
+            result.push(Statement { key, content, created_at, tr_start, tr_end });
         }
         Ok(result)
     }
@@ -382,9 +383,7 @@ mod tests {
         store.insert_statement(&key, &content, None, None).unwrap();
 
         let loaded = store.get_statement(&key).unwrap().unwrap();
-        assert_eq!(loaded.key.subject, "Alice");
-        assert_eq!(loaded.key.predicate, "knows");
-        assert_eq!(loaded.key.object, "Bob");
+        assert_eq!(loaded.key.to_csv_key(), "Alice,knows,Bob");
         assert_eq!(loaded.content.data, "they are friends");
     }
 

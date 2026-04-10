@@ -41,7 +41,7 @@ hypatia knowledge-create <name> -d "<data>" -t "<tag1,tag2>"
 
 | User says | Command |
 |---|---|
-| "remember Rust as a systems programming language" | `hypatia knowledge-create "Rust" -d "systems programming language"` |
+| "remember Rust as a systems programming language" | `hypatia knowledge-create "Rust" -d "systems programming language" -t "language,compiled"` |
 | "save knowledge about Go with tags language and compiled" | `hypatia knowledge-create "Go" -d "" -t "language,compiled"` |
 | "store that Python is a scripting language, tag it as dynamic" | `hypatia knowledge-create "Python" -d "scripting language" -t "dynamic"` |
 
@@ -65,9 +65,15 @@ hypatia knowledge-delete <name>
 |---|---|
 | "delete knowledge Rust" / "remove the Rust entry" | `hypatia knowledge-delete "Rust"` |
 
-## Statement Creation
+## Statement Creation — Proactive Graph Building
 
-Statements are RDF-style triples: `(subject, predicate, object)`.
+Statements are RDF-style triples: `(subject, predicate, object)`. They form the edges of the knowledge graph.
+
+### Key Principle: Always Enrich with Relationships
+
+When the user asks to store or remember information, **always create statements alongside knowledge entries** to build graph connectivity. The goal is a rich, traversable knowledge graph, not isolated data points.
+
+**Pattern**: After creating a knowledge entry, identify entities mentioned in the content and create `$triple` relationships between them. At minimum, create one `is_a` statement for every new knowledge entry.
 
 ```
 hypatia statement-create <subject> <predicate> <object> -d "<data>"
@@ -83,20 +89,102 @@ hypatia statement-create <subject> <predicate> <object> -d "<data>"
 | "X works for Y" | X | works_for | Y |
 | "X is related to Y" | X | related_to | Y |
 | "X depends on Y" | X | depends_on | Y |
+| "X uses Y" | X | uses | Y |
+| "X contains Y" | X | contains | Y |
+| "X created Y" | X | created_by | Y (reversed) |
 
 Normalize predicates to `snake_case`. Common predicates: `is_a`, `knows`, `related_to`, `works_for`, `belongs_to`, `depends_on`, `uses`, `contains`, `created_by`.
 
-### Examples
+### Proactive Creation Examples
 
-| User says | Command |
+When the user says **"remember that Rust is a systems programming language"**, execute BOTH:
+
+```bash
+hypatia knowledge-create "Rust" -d "systems programming language" -t "language,compiled"
+hypatia statement-create "Rust" "is_a" "systems programming language"
+```
+
+When the user says **"remember that PostgreSQL is a relational database used by the API"**, execute:
+
+```bash
+hypatia knowledge-create "PostgreSQL" -d "relational database" -t "database,relational"
+hypatia statement-create "PostgreSQL" "is_a" "relational database"
+hypatia statement-create "API" "depends_on" "PostgreSQL" -d "primary data store"
+```
+
+When the user says **"note that Alice is a senior engineer on the Backend team"**, execute:
+
+```bash
+hypatia knowledge-create "Alice" -d "senior engineer on Backend team" -t "person,engineer"
+hypatia statement-create "Alice" "is_a" "senior engineer"
+hypatia statement-create "Alice" "works_for" "Backend team"
+```
+
+### Auto-linking Rules
+
+When creating knowledge entries, automatically extract and create statements for:
+1. **Category**: `"X" is_a "<category>"` — every entity has a type
+2. **Dependencies**: if the content mentions tools, frameworks, or systems X depends on → `X depends_on Y`
+3. **Relationships**: if the content mentions other entities → link them with appropriate predicates
+4. **Containment**: if X is part of Y → `X belongs_to Y`
+
+## Search Strategy — Graph-First Retrieval
+
+When searching for information, prefer precise graph operators over broad FTS search. Use the following decision tree:
+
+### Search Decision Tree
+
+```
+1. User mentions a specific entity name?
+   → knowledge-get (direct lookup)
+
+2. User asks about relationships involving a known entity?
+   → $triple operator (fastest, indexed)
+
+3. User asks about a type of relationship (e.g., "who works for X")?
+   → $triple with wildcard on entity positions
+
+4. User wants to match a pattern (e.g., "names starting with X")?
+   → $like operator
+
+5. User wants to filter by content attributes (e.g., "markdown entries", "entries with specific format")?
+   → $content operator
+
+6. User asks about a specific entity's relationships?
+   → $triple + knowledge-get combined
+
+7. Broad/ambiguous query?
+   → $search (FTS fallback)
+```
+
+### Prefer $triple over $search for entity queries
+
+When the query involves a known entity (person, tool, concept), use `$triple` for precise, indexed lookups instead of FTS:
+
+| Instead of | Use |
 |---|---|
-| "record that Alice knows Bob" | `hypatia statement-create "Alice" "knows" "Bob"` |
-| "remember that Rust is a systems language" | `hypatia statement-create "Rust" "is_a" "systems language"` |
-| "note that the API depends on PostgreSQL, with context 'critical dependency'" | `hypatia statement-create "API" "depends_on" "PostgreSQL" -d "critical dependency"` |
+| `["$statement", ["$search", "Alice"]]` | `["$statement", ["$triple", "Alice", "$*", "$*"]]` |
+| `["$statement", ["$search", "manages"]]` | `["$statement", ["$triple", "$*", "manages", "$*"]]` |
+| `["$statement", ["$contains", "triple", "Alice"]]` | `["$statement", ["$triple", "Alice", "$*", "$*"]]` |
+
+### Combined Queries
+
+For rich retrieval, combine graph traversal with content filtering:
+
+```bash
+# Find all relationships involving Alice, created after a date
+hypatia query '["$statement", ["$and", ["$triple", "Alice", "$*", "$*"], ["$gt", "created_at", "2025-01-01"]]]'
+
+# Find all knowledge entries in markdown format about a topic
+hypatia query '["$knowledge", ["$and", ["$content", {"format": "markdown"}], ["$search", "database"]]]'
+
+# Find all people (entities that are_a "engineer")
+hypatia query '["$statement", ["$triple", "$*", "is_a", "engineer"]]'
+```
 
 ## Full-text Search
 
-Search is the safest default for broad or ambiguous queries. It covers both knowledge and statements.
+Search is the fallback for broad or ambiguous queries. It covers both knowledge and statements.
 
 ```
 hypatia search <query> [-c <catalog>] [--limit N] [--offset N]
@@ -112,7 +200,6 @@ hypatia search <query> [-c <catalog>] [--limit N] [--offset N]
 |---|---|
 | "search for programming" / "find everything about programming" | `hypatia search "programming"` |
 | "search knowledge for rust" | `hypatia search "rust" -c knowledge` |
-| "find statements about Alice" | `hypatia search "Alice" -c statement` |
 | "what do you know about databases?" | `hypatia search "databases"` |
 
 ## JSE Query Translation
@@ -148,11 +235,14 @@ No conditions means "return all":
 | `$lt` | Less than | `["$lt", "field", "value"]` |
 | `$gte` | Greater than or equal | `["$gte", "field", "value"]` |
 | `$lte` | Less than or equal | `["$lte", "field", "value"]` |
+| `$like` | SQL LIKE pattern match | `["$like", "field", "pattern"]` |
 | `$contains` | Substring match in content JSON | `["$contains", "field", "value"]` |
+| `$content` | Match content JSON key-value pairs | `["$content", {"key": "value"}]` |
 | `$search` | Full-text search (FTS) | `["$search", "query text"]` |
 | `$and` | Logical AND | `["$and", cond1, cond2, ...]` |
 | `$or` | Logical OR | `["$or", cond1, cond2, ...]` |
 | `$not` | Logical NOT | `["$not", condition]` |
+| `$triple` | Triple position match | `["$triple", "Alice", "$*", "Bob"]` |
 
 ### Critical Syntax Rules
 
@@ -162,23 +252,79 @@ No conditions means "return all":
 
 2. **`$search` must be inside `$knowledge` or `$statement`**, never top-level. When inside `$knowledge`, it searches FTS with catalog=knowledge. When inside `$statement`, it searches with catalog=statement.
 
-3. **Field names** like `"name"`, `"subject"`, `"predicate"`, `"object"` are used as plain strings. For content JSON sub-fields (e.g., tags), `$contains` uses `json_extract_string` automatically.
+3. **Field names** like `"name"`, `"triple"` are used as plain strings. For content JSON sub-fields (e.g., tags), `$contains` uses `json_extract_string` automatically.
 
 4. **Available fields for knowledge**: `name`, `created_at`, plus any content JSON field via `$contains`.
 
-5. **Available fields for statement**: `subject`, `predicate`, `object`, `created_at`, `tr_start`, `tr_end`, plus content JSON fields via `$contains`.
+5. **Available fields for statement**: `triple` (CSV-formatted subject,predicate,object), `subject`, `predicate`, `object`, `created_at`, `tr_start`, `tr_end`, plus content JSON fields via `$contains`. For position-based triple matching, prefer `$triple` over `$contains`.
+
+### `$triple` Operator
+
+The `$triple` operator provides position-based matching on statement triples. Each argument corresponds to subject, predicate, or object. Use `"$*"` as a wildcard to match any value.
+
+```
+["$triple", <subject_pattern>, <predicate_pattern>, <object_pattern>]
+```
+
+| Pattern | Meaning |
+|---------|---------|
+| `"Alice"` | Exact match |
+| `"$*"` | Wildcard — match any value |
+
+**Behavior**:
+- All 3 specified (no wildcards): uses `triple = ?` (primary key lookup, fastest)
+- Partial match: generates conditions on individual columns (`subject = ? AND object = ?`, etc.)
+- At least one non-wildcard required — all wildcards is an error
+- Arguments must be exactly 3
+
+| User says | JSE | Command |
+|---|---|---|
+| "find all relationships where Alice is the subject" | `["$statement", ["$triple", "Alice", "$*", "$*"]]` | `hypatia query '["$statement", ["$triple", "Alice", "$*", "$*"]]'` |
+| "find all knows relationships" | `["$statement", ["$triple", "$*", "knows", "$*"]]` | `hypatia query '["$statement", ["$triple", "$*", "knows", "$*"]]'` |
+| "find everything related to Bob as object" | `["$statement", ["$triple", "$*", "$*", "Bob"]]` | `hypatia query '["$statement", ["$triple", "$*", "$*", "Bob"]]'` |
+| "find the exact Alice knows Bob triple" | `["$statement", ["$triple", "Alice", "knows", "Bob"]]` | `hypatia query '["$statement", ["$triple", "Alice", "knows", "Bob"]]'` |
+| "Alice's relationships with Bob, combined with date filter" | `["$statement", ["$and", ["$triple", "Alice", "$*", "Bob"], ["$gt", "created_at", "2025-01-01"]]]` | `hypatia query '["$statement", ["$and", ["$triple", "Alice", "$*", "Bob"], ["$gt", "created_at", "2025-01-01"]]]'` |
+
+### `$like` Operator
+
+SQL LIKE pattern matching with user-defined wildcards (`%` = any chars, `_` = single char).
+
+```
+["$like", "field", "pattern"]
+```
+
+| User says | JSE | Command |
+|---|---|---|
+| "find entries whose name starts with Rust" | `["$knowledge", ["$like", "name", "Rust%"]]` | `hypatia query '["$knowledge", ["$like", "name", "Rust%"]]'` |
+| "find entries created in January 2025" | `["$knowledge", ["$like", "created_at", "2025-01-%"]]` | `hypatia query '["$knowledge", ["$like", "created_at", "2025-01-%"]]'` |
+| "find statements with subject matching pattern" | `["$statement", ["$like", "subject", "Alice%"]]` | `hypatia query '["$statement", ["$like", "subject", "Alice%"]]'` |
+
+### `$content` Operator
+
+Match key-value pairs inside the `content` JSON column. Checks exact string equality for each specified key.
+
+```
+["$content", {"key1": "value1", "key2": "value2"}]
+```
+
+| User says | JSE | Command |
+|---|---|---|
+| "find all markdown-format entries" | `["$knowledge", ["$content", {"format": "markdown"}]]` | `hypatia query '["$knowledge", ["$content", {"format": "markdown"}]]'` |
+| "find json-format statements" | `["$statement", ["$content", {"format": "json"}]]` | `hypatia query '["$statement", ["$content", {"format": "json"}]]'` |
+| "find entries with specific data and format" | `["$knowledge", ["$content", {"format": "markdown", "data": "hello"}]]` | `hypatia query '["$knowledge", ["$content", {"format": "markdown", "data": "hello"}]]'` |
 
 ### Natural Language to JSE Examples
 
 | User says | JSE | Command |
 |---|---|---|
 | "find knowledge named rust" | `["$knowledge", ["$eq", "name", "rust"]]` | `hypatia query '["$knowledge", ["$eq", "name", "rust"]]'` |
-| "search knowledge about rust programming" | `["$knowledge", ["$search", "rust programming"]]` | `hypatia query '["$knowledge", ["$search", "rust programming"]]'` |
-| "find statements where Alice is the subject" | `["$statement", ["$eq", "subject", "Alice"]]` | `hypatia query '["$statement", ["$eq", "subject", "Alice"]]'` |
-| "find statements about Alice (full-text)" | `["$statement", ["$search", "Alice"]]` | `hypatia query '["$statement", ["$search", "Alice"]]'` |
+| "find all relationships involving Alice" | `["$statement", ["$triple", "Alice", "$*", "$*"]]` | `hypatia query '["$statement", ["$triple", "Alice", "$*", "$*"]]'` |
+| "who does Alice know?" | `["$statement", ["$triple", "Alice", "knows", "$*"]]` | `hypatia query '["$statement", ["$triple", "Alice", "knows", "$*"]]'` |
+| "what type of things relate to Bob?" | `["$statement", ["$triple", "$*", "$*", "Bob"]]` | `hypatia query '["$statement", ["$triple", "$*", "$*", "Bob"]]'` |
 | "find knowledge named rust that contains 'systems' in tags" | `["$knowledge", ["$and", ["$eq", "name", "rust"], ["$contains", "tags", "systems"]]]` | `hypatia query '["$knowledge", ["$and", ["$eq", "name", "rust"], ["$contains", "tags", "systems"]]]'` |
 | "find knowledge NOT named rust" | `["$knowledge", ["$not", ["$eq", "name", "rust"]]]` | `hypatia query '["$knowledge", ["$not", ["$eq", "name", "rust"]]]'` |
-| "find statements where subject is Alice or Bob" | `["$statement", ["$or", ["$eq", "subject", "Alice"], ["$eq", "subject", "Bob"]]]` | `hypatia query '["$statement", ["$or", ["$eq", "subject", "Alice"], ["$eq", "subject", "Bob"]]]'` |
+| "find all is_a relationships" | `["$statement", ["$triple", "$*", "is_a", "$*"]]` | `hypatia query '["$statement", ["$triple", "$*", "is_a", "$*"]]'` |
+| "find entries whose name starts with 'Al'" | `["$knowledge", ["$like", "name", "Al%"]]` | `hypatia query '["$knowledge", ["$like", "name", "Al%"]]'` |
 | "show all knowledge" | `["$knowledge"]` | `hypatia query '["$knowledge"]'` |
 | "find knowledge created after 2025-01-01" | `["$knowledge", ["$gt", "created_at", "2025-01-01"]]` | `hypatia query '["$knowledge", ["$gt", "created_at", "2025-01-01"]]'` |
 | "find knowledge containing 'language' in data" | `["$knowledge", ["$contains", "data", "language"]]` | `hypatia query '["$knowledge", ["$contains", "data", "language"]]'` |
@@ -199,9 +345,11 @@ When the user's request is ambiguous, follow this priority:
 
 1. **Exact name mentioned** ("get Rust", "show Alice") → `knowledge-get` for direct lookup
 2. **Explicit type** ("find knowledge about X" / "find statements about X") → JSE query with the corresponding top-level operator
-3. **Relationship language** ("who does Alice know?", "what is Rust related to?", "relationships of X") → JSE `$statement` query
-4. **Broad/ambiguous** ("find everything about X", "what do you know about X", "search for X") → `hypatia search` (covers both knowledge and statements)
-5. **Create/store/remember** → knowledge-create or statement-create based on context (if it expresses a relationship between two things, use statement; otherwise knowledge)
+3. **Relationship language** ("who does Alice know?", "what is Rust related to?", "relationships of X") → JSE `$statement` query with `$triple` operator
+4. **Pattern matching** ("names starting with X", "entries from January") → JSE with `$like` operator
+5. **Content filtering** ("markdown entries", "entries with format X") → JSE with `$content` operator
+6. **Broad/ambiguous** ("find everything about X", "what do you know about X") → `hypatia search` (covers both knowledge and statements)
+7. **Create/store/remember** → knowledge-create + statement-create (always create relationships alongside knowledge entries)
 
 ## Shell Escaping
 
@@ -220,14 +368,15 @@ hypatia query '["$knowledge", ["$eq", "name", "Alice'\''s project"]]'
 ## Output Format
 
 - **Knowledge entries**: `{"name": "...", "content": {"format": "...", "data": "...", "tags": [...]}, "created_at": "..."}`
-- **Statements**: `{"subject": "...", "predicate": "...", "object": "...", "content": {...}, "created_at": "...", "tr_start": "...", "tr_end": "..."}`
+- **Statements**: `{"triple": "subject,predicate,object", "subject": "...", "predicate": "...", "object": "...", "content": {...}, "created_at": "...", "tr_start": "...", "tr_end": "..."}`
 - **Search results**: `{"id": N, "catalog": "...", "key": "...", "content": "...", "rank": N.N}`
 - **Empty results**: prints "No results found."
 
 ## Important Notes
 
-- There are no `statement-get` or `statement-delete` CLI commands. Use JSE queries (`$statement` with conditions) to find statements.
+- There is no `statement-get` CLI command. Use JSE queries (`$statement` with conditions) to find statements. `statement-delete` is available for deletion.
 - The `-s` / `--shelf` flag defaults to `"default"` for all commands.
 - The REPL mode (`hypatia repl`) is interactive and should NOT be used from this skill. Always use one-shot CLI commands.
 - Content (`-d`) is stored as a string in the content JSON's `data` field.
 - Tags (`-t`) are comma-separated strings.
+- **Always create statements alongside knowledge entries** to maintain graph connectivity. Every knowledge entry should have at least one corresponding `is_a` statement.

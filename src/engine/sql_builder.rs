@@ -42,7 +42,7 @@ impl SqlBuilder {
                 "SELECT name, content, CAST(created_at AS VARCHAR) AS created_at"
             }
             QueryTarget::Statement => {
-                "SELECT subject, predicate, object, content, \
+                "SELECT triple, subject, predicate, object, content, \
                  CAST(created_at AS VARCHAR) AS created_at, \
                  CAST(tr_start AS VARCHAR) AS tr_start, \
                  CAST(tr_end AS VARCHAR) AS tr_end"

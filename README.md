@@ -7,7 +7,7 @@ AI-oriented memory management system. Stores structured knowledge as a graph of 
 ## Features
 
 - **Knowledge Graph** -- Knowledge entries (named info points with tags) and Statement triples (subject-predicate-object with temporal ranges)
-- **JSE Query Engine** -- JSON-based query language compiling to parameterized SQL + FTS5, supporting `$and`, `$or`, `$not`, `$eq`, `$ne`, `$gt`, `$lt`, `$contains`, `$search`, `$quote`
+- **JSE Query Engine** -- JSON-based query language compiling to parameterized SQL + FTS5, supporting `$and`, `$or`, `$not`, `$eq`, `$ne`, `$gt`, `$lt`, `$contains`, `$like`, `$content`, `$search`, `$quote`, `$triple`
 - **Dual-Database Storage** -- DuckDB for structured queries, SQLite FTS5 for full-text search, auto-synchronized
 - **Shelf System** -- Named, connectable, exportable data directories for isolation
 - **CLI + REPL** -- Full command-line interface with interactive mode (rustyline)
@@ -31,8 +31,12 @@ hypatia search "programming language"
 
 # Structured query (JSE)
 hypatia query '["$knowledge", ["$eq", "name", "Rust"]]'
-hypatia query '["$statement", ["$eq", "subject", "Rust"]]'
+hypatia query '["$statement", ["$triple", "Rust", "$*", "$*"]]'
 hypatia query '["$knowledge", ["$search", "database migration"]]'
+
+# Pattern matching and content filtering
+hypatia query '["$knowledge", ["$like", "name", "Rust%"]]'
+hypatia query '["$knowledge", ["$content", {"format": "markdown"}]]'
 
 # Interactive REPL
 hypatia repl
@@ -74,11 +78,14 @@ JSE (JSON Search Expression) enables precise queries against knowledge or statem
 | `$ne` | Not equals | `["$ne", "name", "Rust"]` |
 | `$gt` / `$lt` / `$gte` / `$lte` | Comparison | `["$gt", "created_at", "2025-01-01"]` |
 | `$contains` | Substring in JSON field | `["$contains", "tags", "backend"]` |
+| `$like` | SQL LIKE pattern match | `["$like", "name", "Rust%"]` |
+| `$content` | Match content JSON key-values | `["$content", {"format": "markdown"}]` |
 | `$search` | Full-text search | `["$search", "database migration"]` |
 | `$and` | Logical AND | `["$and", cond1, cond2]` |
 | `$or` | Logical OR | `["$or", cond1, cond2]` |
 | `$not` | Logical NOT | `["$not", cond]` |
 | `$quote` | Prevent evaluation | `["$quote", ["$eq", "x", "y"]]` |
+| `$triple` | Triple position match | `["$triple", "Alice", "$*", "Bob"]` |
 
 ### Examples
 
@@ -89,14 +96,29 @@ hypatia query '["$knowledge"]'
 # Knowledge named "Rust" with tag "systems"
 hypatia query '["$knowledge", ["$and", ["$eq", "name", "Rust"], ["$contains", "tags", "systems"]]]'
 
-# Statements about Alice
-hypatia query '["$statement", ["$eq", "subject", "Alice"]]'
+# Statements containing "Alice" in triple
+hypatia query '["$statement", ["$contains", "triple", "Alice"]]'
+
+# Triple matching: all relationships where Alice is the subject
+hypatia query '["$statement", ["$triple", "Alice", "$*", "$*"]]'
+
+# Triple matching: all "manages" relationships
+hypatia query '["$statement", ["$triple", "$*", "manages", "$*"]]'
+
+# Triple matching: exact triple (uses PK index)
+hypatia query '["$statement", ["$triple", "Alice", "knows", "Bob"]]'
+
+# Pattern matching: names starting with "Al"
+hypatia query '["$knowledge", ["$like", "name", "Al%"]]'
+
+# Content filtering: all markdown entries
+hypatia query '["$knowledge", ["$content", {"format": "markdown"}]]'
 
 # FTS search within knowledge
 hypatia query '["$knowledge", ["$search", "query optimization"]]'
 
-# Statements where subject is Alice or Bob
-hypatia query '["$statement", ["$or", ["$eq", "subject", "Alice"], ["$eq", "subject", "Bob"]]]'
+# Statements where triple contains Alice or Bob
+hypatia query '["$statement", ["$or", ["$contains", "triple", "Alice"], ["$contains", "triple", "Bob"]]]'
 ```
 
 ## Architecture
@@ -136,15 +158,18 @@ BENCH_SCALE=large cargo test --test bench --release
 
 ### Results (small scale, debug build, Apple Silicon)
 
+1K knowledge, 2K statements, 20 needles, 20 JSE query types (×3 runs each).
+
 | Metric | Result |
 |--------|--------|
 | **Recall@1** | 95.0% (19/20 needles) |
 | **Recall@5** | 95.0% |
 | **Recall@10** | 95.0% |
-| **FTS search p50** | 382 us |
-| **FTS search p99** | 825 us |
-| **JSE query p50** | 2.99 ms |
-| **Ingest throughput** | 369 knowledge/s, 281 statements/s |
+| **FTS search p50** | 393 us |
+| **FTS search p99** | 851 us |
+| **JSE query p50** | 3.28 ms |
+| **JSE query count** | 20 types (eq, ne, gt, lt, contains, like, content, search, and, or, not, triple) |
+| **Ingest throughput** | 389 knowledge/s, 281 statements/s |
 
 ### Comparison with MemPalace (ChromaDB vector baseline)
 
@@ -152,7 +177,7 @@ BENCH_SCALE=large cargo test --test bench --release
 |--------|----------------|--------------------------|
 | Recall@5 | 95.0% | 96.6% |
 | Recall@10 | 95.0% | 98.2% |
-| Search latency p50 | 382 us | ~2-50 ms |
+| Search latency p50 | 393 us | ~2-50 ms |
 | Embedding model | None | bge-large / OpenAI |
 | Cold start | None | Model loading (~seconds) |
 | Determinism | Yes | Stochastic |

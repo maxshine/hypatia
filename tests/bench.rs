@@ -182,17 +182,32 @@ fn run_benchmark() {
 
     // Build a set of JSE queries that exercise different operators
     let jse_queries = vec![
+        // Knowledge: basic
         r#"["$knowledge"]"#,
         r#"["$knowledge", ["$eq", "name", "knowledge_000000"]]"#,
         r#"["$knowledge", ["$contains", "data", "authentication"]]"#,
         r#"["$knowledge", ["$contains", "tags", "benchmark"]]"#,
         r#"["$knowledge", ["$search", "database migration"]]"#,
         r#"["$knowledge", ["$and", ["$contains", "tags", "backend"], ["$contains", "data", "API"]]]"#,
+        // Knowledge: $like and $content
+        r#"["$knowledge", ["$like", "name", "knowledge_000%"]]"#,
+        r#"["$knowledge", ["$like", "created_at", "2025-%"]]"#,
+        r#"["$knowledge", ["$content", {"format": "markdown"}]]"#,
+        r#"["$knowledge", ["$and", ["$content", {"format": "markdown"}], ["$contains", "data", "API"]]]"#,
+        // Statement: $contains (legacy)
         r#"["$statement"]"#,
-        r#"["$statement", ["$eq", "subject", "Alice"]]"#,
-        r#"["$statement", ["$eq", "predicate", "works_on"]]"#,
+        r#"["$statement", ["$contains", "triple", "Alice"]]"#,
+        r#"["$statement", ["$contains", "triple", "works_on"]]"#,
         r#"["$statement", ["$search", "Alice"]]"#,
-        r#"["$statement", ["$and", ["$eq", "subject", "Bob"], ["$eq", "predicate", "manages"]]]"#,
+        r#"["$statement", ["$and", ["$contains", "triple", "Bob"], ["$contains", "triple", "manages"]]]"#,
+        // Statement: $triple (indexed)
+        r#"["$statement", ["$triple", "$*", "manages", "$*"]]"#,
+        r#"["$statement", ["$triple", "Alice", "$*", "$*"]]"#,
+        r#"["$statement", ["$triple", "$*", "$*", "Bob"]]"#,
+        // Statement: $like
+        r#"["$statement", ["$like", "subject", "Alice%"]]"#,
+        // Statement: $content
+        r#"["$statement", ["$content", {"format": "markdown"}]]"#,
     ];
 
     let mut jse_durations: Vec<Duration> = Vec::new();
