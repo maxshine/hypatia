@@ -114,10 +114,7 @@ Hypatia 的 JSE 指令包含：
 - $and 会转化成 Duckdb SQL where 条件中的 and
 - $or 会转化成 SQL where 条件中的 or
 - $not 会转化成 SQL where 条件中的 not
-- $search 会转化成 SQLite FTS 数据中的查询，这个查询可以包含一个可选的opts字典，其中包含
-  - catalog
-  - offset
-  - limit
+- $search 会转化成 SQLite FTS 数据中的查询，它始终在 $knowledge 或 $statement 内部使用，与 $and、$or 等指令一致，不单独传入 opts 参数，而是遵循外部的 opts 参数。$search 的产物是对应的子查询，这些子查询限制 knowledge 的 name 或 statement 的 subject、predicate、object 匹配从 FTS 搜索到的 key
 - $gte 对应 大于等于
 - $lte 对应 小于等于
 - $gt 对应大于

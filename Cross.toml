@@ -1,0 +1,80 @@
+# Cross.toml — Configuration for cross-rs (Docker-based cross-compilation)
+# Used when: ./scripts/build.sh --backend cross <target>
+
+[build]
+pre-build = [
+    # Install build dependencies needed by DuckDB and SQLite bundled compilation
+    "apt-get update && apt-get install -y cmake build-essential",
+]
+
+# ─── Linux targets ───
+
+[target.x86_64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:0.2"
+
+[target.x86_64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-musl:0.2"
+
+[target.aarch64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:0.2"
+
+[target.aarch64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl:0.2"
+
+[target.armv7-unknown-linux-gnueabihf]
+image = "ghcr.io/cross-rs/armv7-unknown-linux-gnueabihf:0.2"
+
+[target.armv7-unknown-linux-musleabihf]
+image = "ghcr.io/cross-rs/armv7-unknown-linux-musleabihf:0.2"
+
+[target.riscv64gc-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/riscv64gc-unknown-linux-gnu:0.2"
+
+[target.s390x-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/s390x-unknown-linux-gnu:0.2"
+
+[target.powerpc64le-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/powerpc64le-unknown-linux-gnu:0.2"
+
+# ─── Windows targets (cross-compile from Linux) ───
+
+[target.x86_64-pc-windows-gnu]
+image = "ghcr.io/cross-rs/x86_64-pc-windows-gnu:0.2"
+
+# ─── FreeBSD targets ───
+
+[target.x86_64-unknown-freebsd]
+image = "ghcr.io/cross-rs/x86_64-unknown-freebsd:0.2"
+
+[target.aarch64-unknown-freebsd]
+image = "ghcr.io/cross-rs/aarch64-unknown-freebsd:0.2"
+
+# ─── NetBSD targets ───
+
+[target.x86_64-unknown-netbsd]
+image = "ghcr.io/cross-rs/x86_64-unknown-netbsd:0.2"
+
+# ─── illumos targets ───
+
+[target.x86_64-unknown-illumos]
+image = "ghcr.io/cross-rs/x86_64-unknown-illumos:0.2"
+
+# ─── Android targets ───
+
+[target.aarch64-linux-android]
+image = "ghcr.io/cross-rs/aarch64-linux-android:0.2"
+
+[target.armv7-linux-androideabi]
+image = "ghcr.io/cross-rs/armv7-linux-androideabi:0.2"
+
+[target.x86_64-linux-android]
+image = "ghcr.io/cross-rs/x86_64-linux-android:0.2"
+
+# ─── Environment ───
+
+[build.env]
+passthrough = [
+    "CFLAGS",
+    "CXXFLAGS",
+    "CMAKE_TOOLCHAIN_FILE",
+]

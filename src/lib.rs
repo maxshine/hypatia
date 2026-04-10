@@ -1,0 +1,10 @@
+pub mod cli;
+pub mod engine;
+pub mod error;
+pub mod lab;
+pub mod model;
+pub mod service;
+pub mod storage;
+
+pub use error::{HypatiaError, Result};
+pub use lab::Lab;

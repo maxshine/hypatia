@@ -1,0 +1,14 @@
+# .cargo/config.toml — Cargo build configuration
+# Cross-compilation settings are handled by cargo-zigbuild or cross at build time.
+# This file sets project-level defaults.
+
+[build]
+# Default to release optimizations even in dev builds for DuckDB/SQLite C++ compilation speed
+# Uncomment if you want faster dev builds at the cost of runtime performance:
+# rustflags = ["-C", "debuginfo=1"]
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

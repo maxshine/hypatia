@@ -4,3 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+duckdb = { version = "1", features = ["bundled"] }
+rusqlite = { version = "0.39", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+clap = { version = "4", features = ["derive"] }
+rustyline = "18"
+
+[dev-dependencies]
+tempfile = "3"
+rand = "0.9"
