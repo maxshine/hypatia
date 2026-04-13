@@ -181,6 +181,7 @@ impl SqliteStore {
     }
 
     pub fn search(&self, query: &str, opts: &SearchOpts) -> Result<Vec<FtsResult>> {
+        let query = sanitize_fts_query(query);
         let catalog_filter = opts.catalog.as_deref();
         let sql = match catalog_filter {
             Some(_) =>
@@ -223,6 +224,38 @@ fn is_duplicate_column_error(e: &rusqlite::Error) -> bool {
         rusqlite::Error::ExecuteReturnedResults => false,
         _ => e.to_string().contains("duplicate column name"),
     }
+}
+
+/// Sanitize a query string for SQLite FTS5 by removing special characters
+/// that cause parse errors. Replaces them with spaces and collapses whitespace.
+pub fn sanitize_fts_query(query: &str) -> String {
+    let sanitized: String = query
+        .chars()
+        .map(|c| {
+            matches!(
+                c,
+                ':' | '"' | '\'' | '*' | '^' | '+' | '-' | '(' | ')' | '.' | '?'
+                | '!' | ',' | '/' | '`' | '{' | '}' | '[' | ']' | '~' | '@'
+                | '#' | '%' | ';' | '&' | '|' | '<' | '>'
+            )
+            .then_some(' ')
+            .unwrap_or(c)
+        })
+        .collect();
+    let mut result = String::with_capacity(sanitized.len());
+    let mut prev_space = false;
+    for c in sanitized.chars() {
+        if c == ' ' {
+            if !prev_space {
+                result.push(c);
+            }
+            prev_space = true;
+        } else {
+            result.push(c);
+            prev_space = false;
+        }
+    }
+    result.trim().to_string()
 }
 
 #[cfg(test)]

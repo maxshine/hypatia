@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::embedding::{Embedder, EmbeddingConfig};
+use crate::embedding::{EmbeddingConfig, EmbeddingProvider, build_provider};
 use crate::error::{HypatiaError, Result};
 use crate::model::{QueryResult, QueryTarget, SearchOpts, ShelfConfig, ShelfId};
 use crate::storage::{DuckDbStore, SqliteStore, Storage};
@@ -11,7 +11,7 @@ pub struct OpenShelf {
     pub config: ShelfConfig,
     pub duckdb: DuckDbStore,
     pub sqlite: SqliteStore,
-    pub embedder: Embedder,
+    pub embedder: Box<dyn EmbeddingProvider>,
 }
 
 impl Storage for OpenShelf {
@@ -177,16 +177,11 @@ impl ShelfManager {
             )));
         }
 
-        let duckdb = DuckDbStore::open(&config.duckdb_path)?;
+        let embedding_config = EmbeddingConfig::from_shelf_dir(path);
+        let duckdb = DuckDbStore::open(&config.duckdb_path, embedding_config.dimensions())?;
         let sqlite = SqliteStore::open(&config.sqlite_path)?;
 
-        let embedder_config = EmbeddingConfig {
-            model_path: config.model_path.clone(),
-            tokenizer_path: config.tokenizer_path.clone(),
-            dimensions: 768,
-            max_seq_length: 8192,
-        };
-        let embedder = Embedder::new(embedder_config);
+        let embedder = build_provider(&embedding_config);
 
         let shelf = OpenShelf {
             id: config.id.clone(),

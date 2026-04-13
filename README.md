@@ -1,15 +1,15 @@
 # Hypatia
 
-“We can wander through the stacks of the Library of Alexandria, imagining the scrolls and the knowledge they contain. Its destruction is a warning: all we have is transient.”——Alberto Manguel
+"We can wander through the stacks of the Library of Alexandria, imagining the scrolls and the knowledge they contain. Its destruction is a warning: all we have is transient."——Alberto Manguel
 
-AI-oriented memory management system. Stores structured knowledge as a graph of **Knowledge** entries (nodes) and **Statement** triples (edges), queried via a custom JSON Search Expression (JSE) language. Built on SQLite FTS5 + DuckDB, with optional local embedding model (EmbeddingGemma-300M ONNX) for semantic vector search.
+AI-oriented memory management system. Stores structured knowledge as a graph of **Knowledge** entries (nodes) and **Statement** triples (edges), queried via a custom JSON Search Expression (JSE) language. Built on SQLite FTS5 + DuckDB, with configurable embedding models (local ONNX or remote API) for semantic vector search.
 
 ## Features
 
 - **Knowledge Graph** -- Knowledge entries (named info points with tags) and Statement triples (subject-predicate-object with temporal ranges)
 - **JSE Query Engine** -- JSON-based query language compiling to parameterized SQL + FTS5, supporting `$and`, `$or`, `$not`, `$eq`, `$ne`, `$gt`, `$lt`, `$contains`, `$like`, `$content`, `$search`, `$quote`, `$triple`
 - **Dual-Database Storage** -- DuckDB for structured queries + vector search, SQLite FTS5 (Porter stemmer + multi-column BM25) for full-text search, auto-synchronized
-- **Vector Search** -- Local EmbeddingGemma-300M (ONNX, int8) for semantic similarity search via DuckDB cosine distance — zero external API dependency
+- **Configurable Vector Search** -- Local ONNX models (BGE-M3 default) or remote API (OpenAI-compatible) for semantic similarity search via DuckDB cosine distance
 - **Synonyms** -- Per-entry synonym lists for knowledge, per-position (subject/predicate/object) synonyms for statements, indexed in FTS
 - **Shelf System** -- Named, connectable, exportable data directories for isolation
 - **CLI + REPL** -- Full command-line interface with interactive mode (rustyline)
@@ -22,6 +22,13 @@ AI-oriented memory management system. Stores structured knowledge as a graph of 
 # Build
 cargo build --release
 
+# Download embedding model (BGE-M3, recommended)
+mkdir -p ~/.hypatia/default
+hf download BAAI/bge-m3 --local-dir /tmp/bge-m3
+cp /tmp/bge-m3/onnx/model.onnx ~/.hypatia/default/embedding_model.onnx
+cp /tmp/bge-m3/onnx/model.onnx_data ~/.hypatia/default/model.onnx_data
+cp /tmp/bge-m3/onnx/tokenizer.json ~/.hypatia/default/tokenizer.json
+
 # Create knowledge
 hypatia knowledge-create "Rust" -d "systems programming language" -t "language,compiled"
 
@@ -31,18 +38,109 @@ hypatia statement-create "Rust" "is_a" "systems language"
 # Full-text search
 hypatia search "programming language"
 
+# Vector similarity search (requires embedding model)
+hypatia backfill    # generate embeddings for existing entries
+hypatia similar "programming language"  # semantic search
+
 # Structured query (JSE)
 hypatia query '["$knowledge", ["$eq", "name", "Rust"]]'
 hypatia query '["$statement", ["$triple", "Rust", "$*", "$*"]]'
 hypatia query '["$knowledge", ["$search", "database migration"]]'
 
-# Pattern matching and content filtering
-hypatia query '["$knowledge", ["$like", "name", "Rust%"]]'
-hypatia query '["$knowledge", ["$content", {"format": "markdown"}]]'
-
 # Interactive REPL
 hypatia repl
 ```
+
+## Embedding Models
+
+Hypatia supports multiple embedding backends, configured via `shelf.toml` in the shelf directory (e.g., `~/.hypatia/default/shelf.toml`).
+
+### Default: BAAI/bge-m3 (Local ONNX)
+
+No configuration needed — place model files in the shelf directory and Hypatia auto-detects them.
+
+```bash
+# Download from HuggingFace
+hf download BAAI/bge-m3 --local-dir /tmp/bge-m3
+cp /tmp/bge-m3/onnx/model.onnx ~/.hypatia/default/embedding_model.onnx
+cp /tmp/bge-m3/onnx/model.onnx_data ~/.hypatia/default/model.onnx_data
+cp /tmp/bge-m3/onnx/tokenizer.json ~/.hypatia/default/tokenizer.json
+```
+
+- Dimensions: 1024
+- Max sequence length: 8192
+- Multilingual (100+ languages including Chinese and English)
+
+### Switching to Other Local Models
+
+Create or edit `~/.hypatia/default/shelf.toml`:
+
+```toml
+[embedding]
+provider = "local"
+dimensions = 1536
+max_seq_length = 8192
+```
+
+#### Alibaba-NLP/gte-Qwen2-1.5B-instruct
+
+```bash
+hf download Alibaba-NLP/gte-Qwen2-1.5B-instruct --local-dir /tmp/gte-qwen2
+# Export ONNX first (requires optimum-cli or transformers)
+# Then place files in shelf directory
+```
+
+- Dimensions: 1536
+- Max sequence length: 8192
+- Strong multilingual performance
+
+#### google/embedding-gemma-300M (EmbeddingGemma)
+
+```bash
+hf download google/embedding-gemma-300M --local-dir /tmp/embedding-gemma
+# Export ONNX and place files
+```
+
+- Dimensions: 768
+- Max sequence length: 8192
+- Lightweight, fast inference
+
+### Remote API (OpenAI-Compatible)
+
+For cloud-based embeddings without local model files:
+
+```toml
+[embedding]
+provider = "remote"
+api_url = "https://api.openai.com/v1/embeddings"
+api_key_env = "OPENAI_API_KEY"
+api_model = "text-embedding-3-small"
+dimensions = 1536
+```
+
+Works with any OpenAI-compatible API:
+- OpenAI (`text-embedding-3-small`, `text-embedding-3-large`)
+- Azure OpenAI
+- Local servers (Ollama, LM Studio, vLLM)
+- Other providers ( Voyage AI, Cohere, Jina)
+
+Set the API key as an environment variable:
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+### Configuration Reference
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `provider` | `"local"` | `"local"` for ONNX, `"remote"` for HTTP API |
+| `dimensions` | `1024` | Embedding vector dimensions |
+| `max_seq_length` | `8192` | Max tokenizer sequence length (local only) |
+| `model_path` | `embedding_model.onnx` | ONNX model path, relative to shelf dir (local only) |
+| `tokenizer_path` | `tokenizer.json` | Tokenizer path, relative to shelf dir (local only) |
+| `api_url` | OpenAI URL | API endpoint URL (remote only) |
+| `api_key_env` | `OPENAI_API_KEY` | Environment variable name for API key (remote only) |
+| `api_model` | `text-embedding-3-small` | Model name sent to API (remote only) |
 
 ## CLI Reference
 
@@ -57,6 +155,8 @@ hypatia repl
 | `hypatia statement-create <subj> <pred> <obj> [-d <data>] [--synonyms <json>]` | Create a triple |
 | `hypatia statement-delete <subj> <pred> <obj>` | Delete a triple |
 | `hypatia search <query> [-c <catalog>] [--limit N]` | Full-text search |
+| `hypatia similar <query> [--limit N]` | Vector similarity search |
+| `hypatia backfill` | Generate embeddings for all entries |
 | `hypatia query '<jse-json>'` | Execute a JSE query |
 | `hypatia export <name> <dest>` | Export a shelf |
 | `hypatia repl` | Interactive REPL |
@@ -128,6 +228,7 @@ hypatia query '["$statement", ["$or", ["$contains", "triple", "Alice"], ["$conta
 ```
 src/
 ├── cli/            # CLI commands + REPL (clap + rustyline)
+├── embedding/      # Embedding providers (ONNX local + remote API)
 ├── engine/         # JSE parser, AST, evaluator, SQL builder
 ├── model/          # Knowledge, Statement, Content, Query types
 ├── service/        # Business logic (dual-write to DuckDB + SQLite)
@@ -138,13 +239,59 @@ src/
 └── main.rs         # Entry point
 ```
 
-Each **shelf** is a directory containing `data.duckdb` (structured data) and `index.sqlite` (FTS5 index). The service layer keeps both databases in sync via dual-write.
+Each **shelf** is a directory containing `data.duckdb` (structured data), `index.sqlite` (FTS5 index), optional `shelf.toml` (embedding config), and embedding model files. The service layer keeps both databases in sync via dual-write.
 
 ## Benchmark
 
+### LoCoMo Academic Benchmark
+
+Tested on the LoCoMo long-term conversational memory benchmark (ACL 2024, 10 conversations, 1,540 non-adversarial QA pairs, 6,426 entries). Measures whether the correct evidence passage is found in top-K results.
+
+#### Embedding Model Comparison
+
+| Model | Dims | R@1 | R@5 | R@10 | Vec p50 |
+|-------|------|-----|-----|------|---------|
+| FTS (BM25, baseline) | — | 0.2% | 0.2% | 0.2% | 815 ms |
+| gte-multilingual-base | 768 | 41.6% | 71.6% | 80.3% | 48 ms |
+| gte-Qwen2-1.5B-instruct | 1536 | 17.7% | 43.6% | 54.9% | 105 ms |
+| **BAAI/bge-m3** | **1024** | **38.6%** | **65.7%** | **75.2%** | **43 ms** |
+
+#### BGE-M3 by Category
+
+| Category | N | FTS R@10 | Vector R@10 | Improvement |
+|----------|---|----------|-------------|-------------|
+| Single-hop | 841 | 0.1% | **76.1%** | +76.0pp |
+| Multi-hop | 282 | 0.4% | **75.5%** | +75.2pp |
+| Temporal | 321 | 0.0% | **80.4%** | +80.4pp |
+| Open-domain | 96 | 1.0% | **49.0%** | +47.9pp |
+| **Overall** | **1540** | **0.2%** | **75.2%** | **+75.0pp** |
+
+#### Comparison with MemPalace (ChromaDB)
+
+| Metric | Hypatia (BGE-M3) | MemPalace ChromaDB | MemPalace Hybrid v5 |
+|--------|-------------------|--------------------|---------------------|
+| R@10 | 75.2% | 60.3% | 88.9% |
+| Vec latency p50 | 43 ms | ~2-50 ms | ~2-50 ms |
+| Ingest time | ~9 min | — | — |
+
+**Note**: LoCoMo is designed as a semantic challenge, which is why BM25 FTS recall is near zero. Vector search closes this gap effectively. The gte-multilingual-base (768d) slightly outperforms BGE-M3 (1024d) on R@10, but BGE-M3 offers better multilingual coverage and faster ingestion.
+
+#### Run the Benchmark
+
+```bash
+# Download test data
+curl -sL https://huggingface.co/datasets/Percena/locomo-mc10/resolve/main/raw/locomo10.json -o locomo10.json
+
+# Run (requires embedding model in ~/.hypatia/default/)
+LOCOMO_DATA=locomo10.json LOCOMO_RESULTS=results.jsonl \
+  cargo test --test locomo --release -- --nocapture
+```
+
+### Synthetic Benchmark
+
 Benchmark uses synthetic data with planted needles (known-answer entries) to measure retrieval quality, following MemPalace's methodology.
 
-### Run
+#### Run
 
 ```bash
 # Small scale (1K knowledge, 2K statements, ~12s)
@@ -158,9 +305,9 @@ BENCH_SCALE=medium cargo test --test bench --release
 BENCH_SCALE=large cargo test --test bench --release
 ```
 
-### Results (small scale, debug build, Apple Silicon)
+#### Results (small scale, debug build, Apple Silicon)
 
-1K knowledge, 2K statements, 20 needles, 20 JSE query types (×3 runs each).
+1K knowledge, 2K statements, 20 needles, 20 JSE query types (x3 runs each).
 
 | Metric | Result |
 |--------|--------|
@@ -173,40 +320,9 @@ BENCH_SCALE=large cargo test --test bench --release
 | **JSE query count** | 20 types (eq, ne, gt, lt, contains, like, content, search, and, or, not, triple) |
 | **Ingest throughput** | 384 knowledge/s, 280 statements/s |
 
-### Comparison with MemPalace (ChromaDB vector baseline)
-
-| Metric | Hypatia (FTS5) | MemPalace (ChromaDB raw) |
-|--------|----------------|--------------------------|
-| Recall@1 | **100.0%** | — |
-| Recall@5 | **100.0%** | 96.6% |
-| Recall@10 | **100.0%** | 98.2% |
-| Search latency p50 | 474 us | ~2-50 ms |
-| Embedding model | None | bge-large / OpenAI |
-| Cold start | None | Model loading (~seconds) |
-| Determinism | Yes | Stochastic |
-
-Hypatia achieves **higher recall than vector-based retrieval** with **10-100x lower latency** and **zero dependency** on embedding models. FTS5 with Porter stemmer + multi-column BM25 weighting handles word form variations, and the synonyms field covers domain-specific terminology.
-
 Full report: [docs/benchmark-report.md](docs/benchmark-report.md)
 
-**Honest assessment**: These results are on synthetic data with known-answer queries — not academic benchmarks. See [docs/benchmark-honest-assessment.md](docs/benchmark-honest-assessment.md) for a frank analysis of coverage gaps, overfitting risks, and comparison with MemPalace's methodology.
-
-### LoCoMo Academic Benchmark
-
-Tested on the LoCoMo long-term conversational memory benchmark (ACL 2024, 10 conversations, 1,540 non-adversarial QA pairs, 6,426 entries). Hypatia now supports both FTS and vector search (EmbeddingGemma-300M ONNX):
-
-| Strategy | R@1 | R@10 | Latency p50 |
-|----------|-----|------|-------------|
-| FTS (BM25) | 0.2% | 0.2% | 814 ms |
-| **Vector (cosine)** | **41.6%** | **80.3%** | **48 ms** |
-
-Vector search closes the lexical gap that FTS cannot bridge, achieving 80.3% R@10 — surpassing MemPalace's raw ChromaDB baseline (60.3%) and approaching their hybrid mode (88.9%).
-
-| Metric | Hypatia Vector | MemPalace ChromaDB | MemPalace Hybrid v5 |
-|--------|----------------|--------------------|---------------------|
-| R@10 | 80.3% | 60.3% | 88.9% |
-
-Full report: [docs/locomo-coverage.md](docs/locomo-coverage.md)
+**Honest assessment**: These results are on synthetic data with known-answer queries -- not academic benchmarks. See [docs/benchmark-honest-assessment.md](docs/benchmark-honest-assessment.md) for a frank analysis.
 
 ## Cross-Compilation
 

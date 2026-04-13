@@ -4,7 +4,7 @@ pub mod sqlite_store;
 
 pub use duckdb_store::DuckDbStore;
 pub use shelf_manager::{OpenShelf, ShelfManager};
-pub use sqlite_store::{FtsDoc, SqliteStore};
+pub use sqlite_store::{sanitize_fts_query, FtsDoc, SqliteStore};
 
 use crate::error::Result;
 use crate::model::{QueryResult, QueryTarget, SearchOpts};

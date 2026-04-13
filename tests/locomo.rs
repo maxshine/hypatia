@@ -77,33 +77,7 @@ struct Turn {
 
 // ── FTS sanitization ─────────────────────────────────────────────────
 
-fn sanitize_fts_query(query: &str) -> String {
-    let sanitized: String = query
-        .chars()
-        .map(|c| {
-            matches!(
-                c,
-                ':' | '"' | '\'' | '*' | '^' | '+' | '-' | '(' | ')' | '.' | '?' | '!' | ','
-            )
-            .then_some(' ')
-            .unwrap_or(c)
-        })
-        .collect();
-    let mut result = String::new();
-    let mut prev_space = false;
-    for c in sanitized.chars() {
-        if c == ' ' {
-            if !prev_space {
-                result.push(c);
-            }
-            prev_space = true;
-        } else {
-            result.push(c);
-            prev_space = false;
-        }
-    }
-    result.trim().to_string()
-}
+use hypatia::storage::sanitize_fts_query;
 
 // ── Extract sessions from conversation data ──────────────────────────
 
@@ -161,22 +135,37 @@ fn setup_model_files(shelf_path: &std::path::Path) -> bool {
         return false;
     }
 
-    // Copy model files (symlinks can be unreliable with temp dirs)
-    if std::fs::copy(&model_src, shelf_path.join("embedding_model.onnx")).is_err() {
-        return false;
+    // Copy/symlink model files
+    let model_dest = shelf_path.join("embedding_model.onnx");
+    let tokenizer_dest = shelf_path.join("tokenizer.json");
+    // Use symlink for large ONNX files, copy for small tokenizer
+    if std::os::unix::fs::symlink(&model_src, &model_dest).is_err() {
+        if std::fs::copy(&model_src, &model_dest).is_err() {
+            return false;
+        }
     }
-    if std::fs::copy(&tokenizer_src, shelf_path.join("tokenizer.json")).is_err() {
-        return false;
+    if std::os::unix::fs::symlink(&tokenizer_src, &tokenizer_dest).is_err() {
+        if std::fs::copy(&tokenizer_src, &tokenizer_dest).is_err() {
+            return false;
+        }
     }
 
-    // Copy external data file if it exists
+    // Handle external data file — use symlink to avoid copying large files
     for candidate in [
+        src_dir.join("model.onnx_data"),
         src_dir.join("model_quantized.onnx_data"),
         src_dir.join("embedding_model.onnx_data"),
+        src_dir.join("embedding_model.onnx.data"),
     ] {
         if candidate.exists() {
             let dest_name = candidate.file_name().unwrap().to_string_lossy().to_string();
-            let _ = std::fs::copy(&candidate, shelf_path.join(&dest_name));
+            let dest = shelf_path.join(&dest_name);
+            // Prefer symlink for large files, fall back to copy
+            if std::os::unix::fs::symlink(&candidate, &dest).is_err() {
+                if std::fs::copy(&candidate, &dest).is_err() {
+                    return false;
+                }
+            }
         }
     }
 

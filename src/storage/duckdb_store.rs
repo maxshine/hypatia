@@ -6,16 +6,20 @@ use duckdb::{params, Connection, OptionalExt};
 use crate::error::{HypatiaError, Result, StorageError};
 use crate::model::{Content, Knowledge, Statement, StatementKey};
 
-const KNOWLEDGE_SCHEMA: &str = "\
-CREATE TABLE IF NOT EXISTS knowledge (
+fn knowledge_schema(dimensions: usize) -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS knowledge (
     name TEXT PRIMARY KEY,
     content JSON,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    embedding FLOAT[768]
-)";
+    embedding FLOAT[{dimensions}]
+)"
+    )
+}
 
-const STATEMENT_SCHEMA: &str = "\
-CREATE TABLE IF NOT EXISTS statement (
+fn statement_schema(dimensions: usize) -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS statement (
     triple TEXT PRIMARY KEY,
     subject TEXT,
     predicate TEXT,
@@ -24,11 +28,13 @@ CREATE TABLE IF NOT EXISTS statement (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     tr_start TIMESTAMP,
     tr_end TIMESTAMP,
-    embedding FLOAT[768]
+    embedding FLOAT[{dimensions}]
 );
 CREATE INDEX IF NOT EXISTS idx_stmt_subject ON statement(subject);
 CREATE INDEX IF NOT EXISTS idx_stmt_predicate ON statement(predicate);
-CREATE INDEX IF NOT EXISTS idx_stmt_object ON statement(object)";
+CREATE INDEX IF NOT EXISTS idx_stmt_object ON statement(object)"
+    )
+}
 
 /// SQL fragment for selecting all knowledge columns with timestamps as strings.
 const KNOWLEDGE_SELECT: &str = "\
@@ -68,16 +74,16 @@ fn format_timestamp(dt: &NaiveDateTime) -> String {
 }
 
 impl DuckDbStore {
-    pub fn open(path: &Path) -> Result<Self> {
+    pub fn open(path: &Path, dimensions: usize) -> Result<Self> {
         let conn = Connection::open(path).map_err(StorageError::from)?;
         let store = Self { conn };
-        store.init_schema()?;
+        store.init_schema(dimensions)?;
         Ok(store)
     }
 
-    fn init_schema(&self) -> Result<()> {
+    fn init_schema(&self, dimensions: usize) -> Result<()> {
         self.conn
-            .execute_batch(&format!("{KNOWLEDGE_SCHEMA}; {STATEMENT_SCHEMA}"))
+            .execute_batch(&format!("{}; {}", knowledge_schema(dimensions), statement_schema(dimensions)))
             .map_err(StorageError::from)?;
         Ok(())
     }
@@ -607,7 +613,7 @@ mod tests {
     fn setup() -> (TempDir, DuckDbStore) {
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("test.duckdb");
-        let store = DuckDbStore::open(&db_path).unwrap();
+        let store = DuckDbStore::open(&db_path, 1024).unwrap();
         (dir, store)
     }
 
@@ -708,8 +714,8 @@ mod tests {
         store.insert_knowledge("python", &Content::new("Python scripting language")).unwrap();
 
         // Rust and "memory safety" are semantically closer
-        let vector_a = vec![1.0f32; 768];
-        let vector_b = vec![0.0f32; 768];
+        let vector_a = vec![1.0f32; 1024];
+        let vector_b = vec![0.0f32; 1024];
         store.upsert_knowledge_embedding("rust", &vector_a).unwrap();
         store.upsert_knowledge_embedding("python", &vector_b).unwrap();
 
@@ -728,8 +734,8 @@ mod tests {
         store.insert_statement(&key1, &Content::new("friends"), None, None).unwrap();
         store.insert_statement(&key2, &Content::new("coworkers"), None, None).unwrap();
 
-        let vector_a = vec![1.0f32; 768];
-        let vector_b = vec![0.0f32; 768];
+        let vector_a = vec![1.0f32; 1024];
+        let vector_b = vec![0.0f32; 1024];
         store.upsert_statement_embedding(&key1.to_csv_key(), &vector_a).unwrap();
         store.upsert_statement_embedding(&key2.to_csv_key(), &vector_b).unwrap();
 
@@ -744,7 +750,7 @@ mod tests {
         store.insert_knowledge("with_vec", &Content::new("data")).unwrap();
         store.insert_knowledge("no_vec", &Content::new("data")).unwrap();
 
-        let vector = vec![0.5f32; 768];
+        let vector = vec![0.5f32; 1024];
         store.upsert_knowledge_embedding("with_vec", &vector).unwrap();
 
         let results = store.vector_search_knowledge(&vector, 10).unwrap();
@@ -758,7 +764,7 @@ mod tests {
         store.insert_knowledge("has_vec", &Content::new("data")).unwrap();
         store.insert_knowledge("no_vec", &Content::new("data")).unwrap();
 
-        let vector = vec![0.5f32; 768];
+        let vector = vec![0.5f32; 1024];
         store.upsert_knowledge_embedding("has_vec", &vector).unwrap();
 
         let missing = store.knowledge_without_embeddings().unwrap();
@@ -770,7 +776,7 @@ mod tests {
     fn clear_embedding() {
         let (_dir, store) = setup();
         store.insert_knowledge("k1", &Content::new("data")).unwrap();
-        let vector = vec![0.5f32; 768];
+        let vector = vec![0.5f32; 1024];
         store.upsert_knowledge_embedding("k1", &vector).unwrap();
         assert_eq!(store.knowledge_with_embeddings().unwrap().len(), 1);
 
