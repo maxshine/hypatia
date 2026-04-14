@@ -316,6 +316,10 @@ fn l2_normalize(v: &[f32]) -> Vec<f32> {
 
 // ── Remote API Provider ───────────────────────────────────────────────
 
+const API_TIMEOUT_SECS: u64 = 60;
+const MAX_RETRIES: u32 = 3;
+const RETRY_BASE_DELAY_MS: u64 = 500;
+
 /// Remote embedding API provider (OpenAI-compatible).
 pub struct RemoteApiProvider {
     api_url: String,
@@ -333,43 +337,101 @@ impl RemoteApiProvider {
             dimensions: config.dimensions,
         }
     }
-}
 
-impl EmbeddingProvider for RemoteApiProvider {
-    fn embed(&self, text: &str) -> Result<Vec<f32>, HypatiaError> {
-        let api_key = std::env::var(&self.api_key_env).map_err(|_| {
+    fn api_key(&self) -> Result<String, HypatiaError> {
+        std::env::var(&self.api_key_env).map_err(|_| {
             HypatiaError::Embedding(format!(
                 "environment variable {} not set",
                 self.api_key_env
             ))
-        })?;
+        })
+    }
 
-        let request_body = serde_json::json!({
+    /// Send an embedding request with timeout and retry.
+    fn request_with_retry(&self, input: &serde_json::Value) -> Result<serde_json::Value, HypatiaError> {
+        let api_key = self.api_key()?;
+
+        let mut request_body = serde_json::json!({
             "model": self.api_model,
-            "input": text,
+            "input": input,
         });
+        if self.dimensions > 0 {
+            request_body["dimensions"] = serde_json::json!(self.dimensions);
+        }
 
-        let response: serde_json::Value = ureq::post(&self.api_url)
-            .header("Authorization", &format!("Bearer {api_key}"))
-            .header("Content-Type", "application/json")
-            .send_json(&request_body)
-            .map_err(|e| HypatiaError::Embedding(format!("API request failed: {e}")))?
-            .body_mut()
-            .read_json()
-            .map_err(|e| HypatiaError::Embedding(format!("failed to parse API response: {e}")))?;
+        let timeout = std::time::Duration::from_secs(API_TIMEOUT_SECS);
+        let mut last_err = None;
 
+        for attempt in 0..=MAX_RETRIES {
+            if attempt > 0 {
+                let delay = std::time::Duration::from_millis(
+                    RETRY_BASE_DELAY_MS * 2u64.pow(attempt - 1),
+                );
+                eprintln!(
+                    "    [remote-embed] retry {attempt}/{MAX_RETRIES} after {}ms",
+                    delay.as_millis()
+                );
+                std::thread::sleep(delay);
+            }
+
+            let result = ureq::post(&self.api_url)
+                .header("Authorization", &format!("Bearer {api_key}"))
+                .header("Content-Type", "application/json")
+                .config()
+                .timeout_per_call(Some(timeout))
+                .http_status_as_error(false)
+                .build()
+                .send_json(&request_body);
+
+            match result {
+                Ok(mut response) => {
+                    let status = response.status();
+                    if status.as_u16() >= 400 {
+                        let msg = response.body_mut().read_to_string().unwrap_or_default();
+                        if status.as_u16() == 429 {
+                            last_err = Some(format!("rate limited (429): {msg}"));
+                            continue;
+                        }
+                        return Err(HypatiaError::Embedding(format!(
+                            "API returned {}: {msg}", status
+                        )));
+                    }
+                    let body: serde_json::Value = response
+                        .body_mut()
+                        .read_json()
+                        .map_err(|e| HypatiaError::Embedding(format!(
+                            "failed to parse API response: {e}"
+                        )))?;
+                    return Ok(body);
+                }
+                Err(e) => {
+                    last_err = Some(format!("request failed: {e}"));
+                    continue;
+                }
+            }
+        }
+
+        Err(HypatiaError::Embedding(format!(
+            "all {} retries exhausted: {}",
+            MAX_RETRIES,
+            last_err.unwrap_or_else(|| "unknown error".into())
+        )))
+    }
+
+    /// Parse a single embedding from the API response.
+    fn parse_embedding(response: &serde_json::Value, index: usize) -> Result<Vec<f32>, HypatiaError> {
         let embedding = response
             .get("data")
-            .and_then(|d: &serde_json::Value| d.get(0))
-            .and_then(|d: &serde_json::Value| d.get("embedding"))
-            .and_then(|e: &serde_json::Value| e.as_array())
+            .and_then(|d| d.get(index))
+            .and_then(|d| d.get("embedding"))
+            .and_then(|e| e.as_array())
             .ok_or_else(|| {
                 HypatiaError::Embedding("unexpected API response format".into())
             })?;
 
         let vector: Vec<f32> = embedding
             .iter()
-            .filter_map(|v: &serde_json::Value| v.as_f64().map(|f| f as f32))
+            .filter_map(|v| v.as_f64().map(|f| f as f32))
             .collect();
 
         if vector.is_empty() {
@@ -379,6 +441,13 @@ impl EmbeddingProvider for RemoteApiProvider {
         }
 
         Ok(vector)
+    }
+}
+
+impl EmbeddingProvider for RemoteApiProvider {
+    fn embed(&self, text: &str) -> Result<Vec<f32>, HypatiaError> {
+        let response = self.request_with_retry(&serde_json::json!(text))?;
+        Self::parse_embedding(&response, 0)
     }
 
     fn dimensions(&self) -> usize {

@@ -1,0 +1,21 @@
+# Hypatia Remote Embedding Benchmark Configuration
+# Fill in the values below, then rename to shelf.toml and place in ~/.hypatia/default/
+
+[embedding]
+provider = "remote"
+
+# API endpoint (OpenAI-compatible)
+api_url = "https://ai.gitee.com/v1/embeddings"
+
+# Environment variable name holding the API key
+api_key_env = "GITEE_AI_API_KEY"
+
+# Model name sent to the API
+api_model = "Qwen3-Embedding-8B"
+
+# Embedding dimensions (must match the model's output)
+# text-embedding-3-large: 3072 (or 1536 with dimensions param)
+# text-embedding-3-small: 1536
+# Voyage-3: 1024
+# Cohere embed-v3: 1024
+dimensions = 1024

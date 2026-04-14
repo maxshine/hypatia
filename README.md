@@ -170,7 +170,23 @@ Works with any OpenAI-compatible API:
 - OpenAI (`text-embedding-3-small`, `text-embedding-3-large`)
 - Azure OpenAI
 - Local servers (Ollama, LM Studio, vLLM)
-- Other providers ( Voyage AI, Cohere, Jina)
+- Other providers (Voyage AI, Cohere, Jina, Gitee AI)
+
+#### Ollama Example
+
+```toml
+[embedding]
+provider = "remote"
+api_url = "http://localhost:11434/v1/embeddings"
+api_key_env = "OLLAMA_API_KEY"
+api_model = "qwen3-embedding:8b"
+dimensions = 1024
+```
+
+```bash
+# Set a dummy key (Ollama doesn't require auth)
+export OLLAMA_API_KEY="ollama"
+```
 
 Set the API key as an environment variable:
 ```bash
@@ -312,6 +328,9 @@ Tested on the LoCoMo long-term conversational memory benchmark (ACL 2024, 10 con
 | gte-multilingual-base | 305M | 768 | mean | 13.6% | 31.9% | 42.5% | 25 ms |
 | gte-Qwen2-1.5B-instruct | 1.5B | 1536 | mean | 17.7% | 43.6% | 54.9% | 105 ms |
 | Jina v5 text-small | 677M | 1024 | last_token | 24.9% | 50.7% | 60.4% | 54 ms |
+| GLM Embedding-3 (API) | — | 1024 | — | 22.4% | 53.3% | 64.9% | 146 ms |
+| Qwen3-Embedding-8B (Ollama) | 8B | 1024 | — | 32.9% | 59.5% | 70.7% | 152 ms |
+| Qwen3-Embedding-8B (Ollama) | 8B | 4096 | — | 33.6% | 60.0% | 70.6% | 310 ms |
 | **BAAI/bge-m3** | **568M** | **1024** | **mean** | **38.6%** | **65.7%** | **75.2%** | **43 ms** |
 
 #### BGE-M3 by Category (default model)
@@ -332,7 +351,7 @@ Tested on the LoCoMo long-term conversational memory benchmark (ACL 2024, 10 con
 | Vec latency p50 | 43 ms | ~2-50 ms | ~2-50 ms |
 | Ingest time | ~9 min | — | — |
 
-**Note**: LoCoMo is designed as a semantic challenge, which is why BM25 FTS recall is near zero. Vector search closes this gap effectively. BGE-M3 (568M, 1024d) achieves the highest recall (R@10=75.2%) with good latency (43ms) and strong multilingual coverage (100+ languages) — the best default choice. Jina v5 text-small (677M) offers mid-range quality (R@10=60.4%) at 54ms. Notably, larger models don't always win: gte-Qwen2 (1.5B) and gte-multilingual-base (305M, ModernBERT) both underperform BGE-M3 on this benchmark.
+**Note**: LoCoMo is designed as a semantic challenge, which is why BM25 FTS recall is near zero. Vector search closes this gap effectively. BGE-M3 (568M, 1024d) achieves the highest recall (R@10=75.2%) with good latency (43ms) and strong multilingual coverage (100+ languages) — the best default choice. Qwen3-Embedding-8B (8B, via Ollama) was tested at both 1024d and native 4096d: higher dimensions yield negligible gains (R@10: 70.7% vs 70.6%) at 2x latency (310ms vs 152ms), confirming that 1024d is the optimal trade-off. Even at 8B params, it does not surpass the much smaller BGE-M3. GLM Embedding-3 (Zhipu AI, cloud API) at 1024d underperforms (R@10=64.9%) compared to local models, suggesting API latency overhead doesn't compensate for model quality. Jina v5 text-small (677M) offers mid-range quality (R@10=60.4%) at 54ms. Notably, larger models don't always win: gte-Qwen2 (1.5B) and gte-multilingual-base (305M, ModernBERT) both underperform BGE-M3 on this benchmark.
 
 #### Run the Benchmark
 
