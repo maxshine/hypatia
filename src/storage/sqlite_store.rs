@@ -135,6 +135,11 @@ impl SqliteStore {
             ))
             .map_err(StorageError::from)?;
 
+        // Rebuild FTS index from existing docs_meta rows
+        self.conn
+            .execute_batch("INSERT INTO docs_fts(docs_fts) VALUES('rebuild')")
+            .map_err(StorageError::from)?;
+
         Ok(())
     }
 

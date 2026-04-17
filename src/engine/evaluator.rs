@@ -75,8 +75,12 @@ impl Evaluator {
                     // to build SQL IN conditions (same pattern as FTS).
                     let search_opts = query_opts_to_search_opts(&opts, target);
                     let search_result = store.execute_similar(&query_text, &search_opts, target)?;
+                    let key_field = match target {
+                        QueryTarget::Knowledge => "name",
+                        QueryTarget::Statement => "triple",
+                    };
                     let keys: Vec<String> = search_result.rows.iter()
-                        .filter_map(|row| row.get("key").and_then(|v| v.as_str()).map(String::from))
+                        .filter_map(|row| row.get(key_field).and_then(|v| v.as_str()).map(String::from))
                         .collect();
                     if keys.is_empty() {
                         builder.add_condition("1=0".to_string(), Vec::new());
