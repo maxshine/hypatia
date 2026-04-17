@@ -166,6 +166,9 @@ impl ShelfManager {
         std::fs::create_dir_all(path)?;
 
         let config = ShelfConfig::from_path(path, name);
+
+        // Ensure archives/ directory exists
+        std::fs::create_dir_all(&config.archives_path)?;
         let shelf_name = config.id.name.clone();
 
         // Check if already connected
@@ -228,7 +231,20 @@ impl ShelfManager {
         // Copy SQLite file
         std::fs::copy(&shelf.config.sqlite_path, dest.join("index.sqlite"))?;
 
+        // Copy archives/ directory if it exists and has content
+        let archives_dest = dest.join("archives");
+        if shelf.config.archives_path.exists() {
+            copy_dir_recursive(&shelf.config.archives_path, &archives_dest)?;
+        }
+
         Ok(())
+    }
+
+    /// Get the absolute path to a shelf's archives directory.
+    pub fn archives_path(&self, shelf_name: &str) -> Option<std::path::PathBuf> {
+        self.shelves
+            .get(shelf_name)
+            .map(|s| s.config.archives_path.clone())
     }
 
     pub fn ensure_default(&mut self) -> Result<String> {
@@ -245,6 +261,25 @@ fn dirs_home() -> std::path::PathBuf {
         .or_else(|_| std::env::var("USERPROFILE"))
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+/// Recursively copy a directory tree.
+fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<()> {
+    if !src.exists() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dest)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dest_path)?;
+        } else {
+            std::fs::copy(&src_path, &dest_path)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -314,6 +349,32 @@ mod tests {
         mgr.export("export-test", dest.path()).unwrap();
         assert!(dest.path().join("data.duckdb").exists());
         assert!(dest.path().join("index.sqlite").exists());
+    }
+
+    #[test]
+    fn connect_creates_archives_dir() {
+        let dir = TempDir::new().unwrap();
+        let mut mgr = ShelfManager::new();
+        mgr.connect(dir.path(), Some("ar-test")).unwrap();
+        let ap = mgr.archives_path("ar-test").unwrap();
+        assert!(ap.exists());
+        assert!(ap.ends_with("archives"));
+    }
+
+    #[test]
+    fn export_includes_archives_dir() {
+        let dir = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        let mut mgr = ShelfManager::new();
+        mgr.connect(dir.path(), Some("ar-export")).unwrap();
+
+        // Put a file in archives/
+        let ap = mgr.archives_path("ar-export").unwrap();
+        std::fs::write(ap.join("test.png"), b"fake-png").unwrap();
+
+        mgr.export("ar-export", dest.path()).unwrap();
+        assert!(dest.path().join("data.duckdb").exists());
+        assert!(dest.path().join("archives/test.png").exists());
     }
 
     #[test]

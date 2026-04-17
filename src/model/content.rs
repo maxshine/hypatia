@@ -29,6 +29,10 @@ pub struct Content {
     pub tags: Vec<String>,
     #[serde(default)]
     pub synonyms: Option<Synonyms>,
+    /// References to archive files stored in the shelf's `archives/` directory.
+    /// Uses the `archive://<relative_path>` convention.
+    #[serde(default)]
+    pub figures: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -46,6 +50,7 @@ impl Default for Content {
             data: String::new(),
             tags: Vec::new(),
             synonyms: None,
+            figures: None,
         }
     }
 }
@@ -71,6 +76,21 @@ impl Content {
     pub fn with_synonyms(mut self, synonyms: Option<Synonyms>) -> Self {
         self.synonyms = synonyms;
         self
+    }
+
+    pub fn with_figures(mut self, figures: Vec<String>) -> Self {
+        self.figures = if figures.is_empty() {
+            None
+        } else {
+            Some(figures)
+        };
+        self
+    }
+
+    /// Resolve an `archive://` reference to a filesystem path relative to a shelf root.
+    /// Returns the relative path without the `archive://` prefix, or None if not an archive ref.
+    pub fn resolve_figure_path(figure: &str) -> Option<&str> {
+        figure.strip_prefix("archive://")
     }
 
     pub fn to_json_string(&self) -> String {
@@ -145,6 +165,26 @@ mod tests {
         let c = Content::from_json_str(json).unwrap();
         assert_eq!(c.data, "hello");
         assert!(c.synonyms.is_none());
+        assert!(c.figures.is_none());
+    }
+
+    #[test]
+    fn figures_roundtrip() {
+        let c = Content::new("desc")
+            .with_figures(vec!["archive://euclid/fig1.png".to_string()]);
+        let json = c.to_json_string();
+        let c2 = Content::from_json_str(&json).unwrap();
+        assert_eq!(c, c2);
+        assert_eq!(c2.figures.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn resolve_figure_path_test() {
+        assert_eq!(
+            Content::resolve_figure_path("archive://euclid/fig1.png"),
+            Some("euclid/fig1.png")
+        );
+        assert_eq!(Content::resolve_figure_path("/some/abs/path"), None);
     }
 
     #[test]

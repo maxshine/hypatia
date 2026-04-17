@@ -214,7 +214,7 @@ export OPENAI_API_KEY="sk-..."
 | `hypatia connect <path> [-n <name>]` | Connect to a shelf directory |
 | `hypatia disconnect <name>` | Disconnect from a shelf |
 | `hypatia list` | List connected shelves |
-| `hypatia knowledge-create <name> [-d <data>] [-t <tags>] [--synonyms <csv>]` | Create a knowledge entry |
+| `hypatia knowledge-create <name> [-d <data>] [-t <tags>] [--synonyms <csv>] [--figures <refs>]` | Create a knowledge entry |
 | `hypatia knowledge-get <name>` | Get a knowledge entry |
 | `hypatia knowledge-delete <name>` | Delete a knowledge entry |
 | `hypatia statement-create <subj> <pred> <obj> [-d <data>] [--synonyms <json>]` | Create a triple |
@@ -222,6 +222,9 @@ export OPENAI_API_KEY="sk-..."
 | `hypatia search <query> [-c <catalog>] [--limit N]` | Full-text search |
 | `hypatia similar <query> [--limit N]` | Vector similarity search |
 | `hypatia backfill` | Generate embeddings for all entries |
+| `hypatia archive-store <file> [-n <name>] [-s <shelf>]` | Store a file in archives with auto-metadata |
+| `hypatia archive-get <name> [-o <output>] [-s <shelf>]` | Get an archive file path or copy it |
+| `hypatia archive-list [-s <shelf>]` | List all archive files |
 | `hypatia query '<jse-json>'` | Execute a JSE query |
 | `hypatia export <name> <dest>` | Export a shelf |
 | `hypatia repl` | Interactive REPL |
@@ -311,7 +314,66 @@ src/
 └── main.rs         # Entry point
 ```
 
-Each **shelf** is a directory containing `data.duckdb` (structured data), `index.sqlite` (FTS5 index), optional `shelf.toml` (embedding config), and embedding model files. The service layer keeps both databases in sync via dual-write.
+Each **shelf** is a directory containing `data.duckdb` (structured data), `index.sqlite` (FTS5 index), optional `shelf.toml` (embedding config), embedding model files, and an `archives/` directory for attachments. The service layer keeps both databases in sync via dual-write.
+
+## Archive Files
+
+Hypatia supports storing archive files (images, PDFs, data, etc.) alongside knowledge entries. Files are stored in the shelf's `archives/` directory and referenced via the `archive://` convention in knowledge content.
+
+```
+~/.hypatia/default/
+├── data.duckdb
+├── index.sqlite
+├── shelf.toml
+└── archives/
+    └── euclid/
+        ├── fig_1_1.png
+        └── fig_1_2.svg
+```
+
+### Commands
+
+```bash
+# Store a file (auto-creates knowledge with metadata)
+hypatia archive-store figure.png -n euclid/fig_1_1.png
+
+# Get the path to a stored archive file
+hypatia archive-get euclid/fig_1_1.png
+
+# Copy an archive file to a local path
+hypatia archive-get euclid/fig_1_1.png -o /tmp/fig.png
+
+# List all archive files
+hypatia archive-list
+
+# Reference an archive when creating knowledge
+hypatia knowledge-create "Euclid Prop 1" \
+  -d "Construction of equilateral triangle" \
+  --figures "archive://euclid/fig_1_1.png"
+```
+
+### Auto-Created Metadata
+
+`archive-store` automatically creates:
+
+1. **Knowledge entry** with name = archive path, containing filename, size, and MIME type
+2. **Statement**: `<path> is_a archive` (graph connectivity)
+
+This enables JSE queries on archive metadata:
+
+```bash
+hypatia query '["$knowledge", ["$contains", "tags", "archive"]]'
+hypatia query '["$knowledge", ["$content", {"mime_type": "image/png"}]]'
+hypatia query '["$statement", ["$triple", "$*", "is_a", "archive"]]'
+```
+
+### Convention
+
+- **Storage**: Files go in `<shelf>/archives/<path>` on the filesystem
+- **Reference**: Use `archive://<path>` in knowledge content's `figures` field
+- **Resolution**: `archive://euclid/fig.png` resolves to `<shelf>/archives/euclid/fig.png`
+- **Export**: `hypatia export` copies the `archives/` directory along with databases
+- **No cascade delete**: Deleting a knowledge entry does not remove the archive file
 
 ## Benchmark
 

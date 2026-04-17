@@ -27,6 +27,7 @@ pub struct ShelfConfig {
     pub sqlite_path: PathBuf,
     pub model_path: PathBuf,
     pub tokenizer_path: PathBuf,
+    pub archives_path: PathBuf,
 }
 
 impl ShelfConfig {
@@ -35,12 +36,14 @@ impl ShelfConfig {
         let sqlite_path = id.path.join("index.sqlite");
         let model_path = id.path.join("embedding_model.onnx");
         let tokenizer_path = id.path.join("tokenizer.json");
+        let archives_path = id.path.join("archives");
         Self {
             id,
             duckdb_path,
             sqlite_path,
             model_path,
             tokenizer_path,
+            archives_path,
         }
     }
 
@@ -75,5 +78,6 @@ mod tests {
         assert_eq!(config.duckdb_path, PathBuf::from("/tmp/test-shelf/data.duckdb"));
         assert_eq!(config.sqlite_path, PathBuf::from("/tmp/test-shelf/index.sqlite"));
         assert_eq!(config.id.name, "test-shelf");
+        assert_eq!(config.archives_path, PathBuf::from("/tmp/test-shelf/archives"));
     }
 }

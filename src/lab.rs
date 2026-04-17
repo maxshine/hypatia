@@ -126,6 +126,44 @@ impl Lab {
         shelf_ref.execute_search(query, &opts)
     }
 
+    // --- Archive files ---
+
+    /// Store a file in the shelf's archives/ directory.
+    /// `dest_relative` is the target path relative to archives/ (e.g., "euclid/fig1.png").
+    /// Returns the absolute path of the stored file.
+    pub fn store_archive(&self, shelf: &str, src: &Path, dest_relative: &str) -> Result<std::path::PathBuf> {
+        let archives_dir = self.shelf_manager.archives_path(shelf).ok_or_else(|| {
+            crate::error::HypatiaError::Shelf(format!("shelf '{shelf}' is not connected"))
+        })?;
+        let dest = archives_dir.join(dest_relative);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(src, &dest)?;
+        Ok(dest)
+    }
+
+    /// Get the absolute path for an archive file by its relative path.
+    pub fn get_archive_path(&self, shelf: &str, relative_path: &str) -> Option<std::path::PathBuf> {
+        let archives_dir = self.shelf_manager.archives_path(shelf)?;
+        let full = archives_dir.join(relative_path);
+        if full.exists() { Some(full) } else { None }
+    }
+
+    /// List all archive files in the shelf's archives/ directory (relative paths).
+    pub fn list_archives(&self, shelf: &str) -> Result<Vec<String>> {
+        let archives_dir = self.shelf_manager.archives_path(shelf).ok_or_else(|| {
+            crate::error::HypatiaError::Shelf(format!("shelf '{shelf}' is not connected"))
+        })?;
+        if !archives_dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut results = Vec::new();
+        list_archives_recursive(&archives_dir, &archives_dir, &mut results)?;
+        results.sort();
+        Ok(results)
+    }
+
     // --- Backfill ---
 
     /// Generate embedding vectors for all entries that don't have one yet.
@@ -188,4 +226,19 @@ impl Lab {
 
         Ok(stats)
     }
+}
+
+fn list_archives_recursive(base: &Path, dir: &Path, results: &mut Vec<String>) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            list_archives_recursive(base, &path, results)?;
+        } else {
+            if let Ok(rel) = path.strip_prefix(base) {
+                results.push(rel.to_string_lossy().to_string());
+            }
+        }
+    }
+    Ok(())
 }

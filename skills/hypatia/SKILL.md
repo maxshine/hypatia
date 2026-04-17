@@ -29,6 +29,30 @@ Use the first one found. All examples below use `hypatia` for brevity.
 | "disconnect shelf NAME" / "close shelf NAME" | `hypatia disconnect <name>` |
 | "export shelf NAME to DEST" | `hypatia export <name> <dest>` |
 
+## Archive Files
+
+Archive files (images, PDFs, data, etc.) are stored in the shelf's `archives/` directory and referenced via `archive://` paths.
+
+| User says | Command |
+|---|---|
+| "store this image" / "add figure fig.png" | `hypatia archive-store <file> -n <dest_path>` |
+| "get archive fig.png" / "show image path" | `hypatia archive-get <name>` |
+| "copy archive to /tmp" | `hypatia archive-get <name> -o /tmp/output.png` |
+| "list archives" / "show all files" | `hypatia archive-list` |
+
+`archive-store` automatically creates a knowledge entry with file metadata (size, MIME type) and an `is_a archive` statement. Archive files can be queried via JSE:
+
+```bash
+hypatia query '["$knowledge", ["$contains", "tags", "archive"]]'
+hypatia query '["$knowledge", ["$content", {"mime_type": "image/png"}]]'
+```
+
+To reference an archive when creating knowledge:
+
+```bash
+hypatia knowledge-create "Euclid Prop 1" -d "equilateral triangle" --figures "archive://euclid/fig1.png"
+```
+
 ## Knowledge CRUD
 
 Knowledge entries are independent information points with a name, content, and tags.
@@ -36,7 +60,7 @@ Knowledge entries are independent information points with a name, content, and t
 ### Create
 
 ```
-hypatia knowledge-create <name> -d "<data>" -t "<tag1,tag2>"
+hypatia knowledge-create <name> -d "<data>" -t "<tag1,tag2>" --figures "archive://path/to/file"
 ```
 
 | User says | Command |

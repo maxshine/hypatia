@@ -48,6 +48,9 @@ enum Commands {
         /// Synonyms (comma-separated)
         #[arg(short, long, default_value = "")]
         synonyms: String,
+        /// Binary figure references (comma-separated, e.g. binary://euclid/fig1.png)
+        #[arg(short, long, default_value = "")]
+        figures: String,
         /// Shelf name
         #[arg(short, long, default_value = "default")]
         shelf: String,
@@ -109,6 +112,34 @@ enum Commands {
         #[arg(short, long, default_value = "default")]
         shelf: String,
     },
+    /// Store a file in the shelf archives and create a knowledge entry with metadata
+    ArchiveStore {
+        /// Path to the source file
+        file: PathBuf,
+        /// Destination path relative to archives/ (e.g. euclid/fig1.png)
+        #[arg(short, long)]
+        name: Option<String>,
+        /// Shelf name
+        #[arg(short, long, default_value = "default")]
+        shelf: String,
+    },
+    /// Get an archive file path or copy it to a destination
+    ArchiveGet {
+        /// Archive file name (relative path in archives/)
+        name: String,
+        /// Output path (prints absolute path if omitted)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Shelf name
+        #[arg(short, long, default_value = "default")]
+        shelf: String,
+    },
+    /// List all archive files in the shelf
+    ArchiveList {
+        /// Shelf name
+        #[arg(short, long, default_value = "default")]
+        shelf: String,
+    },
     /// Enter interactive REPL mode
     Repl,
 }
@@ -152,7 +183,7 @@ fn execute_command(lab: &mut Lab, cmd: Commands) -> crate::error::Result<()> {
             let result = lab.query(&shelf, &json)?;
             print_result(&result);
         }
-        Commands::KnowledgeCreate { name, data, tags, synonyms, shelf } => {
+        Commands::KnowledgeCreate { name, data, tags, synonyms, figures, shelf } => {
             let tags_vec: Vec<String> = if tags.is_empty() {
                 Vec::new()
             } else {
@@ -167,7 +198,15 @@ fn execute_command(lab: &mut Lab, cmd: Commands) -> crate::error::Result<()> {
                     .collect();
                 if list.is_empty() { None } else { Some(Synonyms::Flat(list)) }
             };
-            let content = Content::new(&data).with_tags(tags_vec).with_synonyms(syn);
+            let figures_vec: Vec<String> = if figures.is_empty() {
+                Vec::new()
+            } else {
+                figures.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+            };
+            let content = Content::new(&data)
+                .with_tags(tags_vec)
+                .with_synonyms(syn)
+                .with_figures(figures_vec);
             let k = lab.create_knowledge(&shelf, &name, content)?;
             println!("Created knowledge: {}", k.name);
         }
@@ -227,6 +266,100 @@ fn execute_command(lab: &mut Lab, cmd: Commands) -> crate::error::Result<()> {
             let stats = lab.backfill_vectors(&shelf)?;
             println!("Backfill complete: {} vectors created, {} skipped, {} errors",
                 stats.created, stats.skipped, stats.errors);
+        }
+        Commands::ArchiveStore { file, name, shelf } => {
+            let file_name = file.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unnamed".to_string());
+            let dest_relative = name.unwrap_or(file_name);
+
+            // Store the file
+            let abs_path = lab.store_archive(&shelf, &file, &dest_relative)?;
+
+            // Determine MIME type from extension
+            let ext = std::path::Path::new(&dest_relative)
+                .extension()
+                .map(|e| e.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            let mime_type = match ext.as_str() {
+                "png" => "image/png",
+                "jpg" | "jpeg" => "image/jpeg",
+                "gif" => "image/gif",
+                "svg" => "image/svg+xml",
+                "webp" => "image/webp",
+                "pdf" => "application/pdf",
+                "mp4" => "video/mp4",
+                "mp3" => "audio/mpeg",
+                "wav" => "audio/wav",
+                _ => "application/octet-stream",
+            };
+            let category = if mime_type.starts_with("image/") {
+                "image"
+            } else if mime_type.starts_with("video/") {
+                "video"
+            } else if mime_type.starts_with("audio/") {
+                "audio"
+            } else {
+                "file"
+            };
+
+            // Get file size
+            let size_bytes = std::fs::metadata(&abs_path)?.len();
+
+            // Create knowledge with metadata
+            let meta_data = serde_json::json!({
+                "filename": dest_relative,
+                "size_bytes": size_bytes,
+                "mime_type": mime_type
+            }).to_string();
+
+            let content = Content::new(&meta_data)
+                .with_format(crate::model::Format::Json)
+                .with_tags(vec![
+                    "archive".to_string(),
+                    category.to_string(),
+                    ext.clone(),
+                ])
+                .with_figures(vec![format!("archive://{}", dest_relative)]);
+
+            let k = lab.create_knowledge(&shelf, &dest_relative, content)?;
+
+            // Create statement: <name> is_a archive
+            let key = StatementKey::new(&dest_relative, "is_a", "archive");
+            let stmt_content = Content::new("")
+                .with_tags(vec!["archive".to_string()]);
+            let _ = lab.create_statement(&shelf, &key, stmt_content, None, None);
+
+            println!("Stored: archive://{}", dest_relative);
+            println!("Knowledge: {}", k.name);
+            println!("MIME: {}, Size: {} bytes", mime_type, size_bytes);
+        }
+        Commands::ArchiveGet { name, output, shelf } => {
+            match lab.get_archive_path(&shelf, &name) {
+                Some(path) => {
+                    match output {
+                        Some(dest) => {
+                            std::fs::copy(&path, &dest)?;
+                            println!("Copied to: {}", dest.display());
+                        }
+                        None => {
+                            println!("{}", path.display());
+                        }
+                    }
+                }
+                None => println!("Archive '{}' not found in shelf '{}'.", name, shelf),
+            }
+        }
+        Commands::ArchiveList { shelf } => {
+            let files = lab.list_archives(&shelf)?;
+            if files.is_empty() {
+                println!("No archive files in shelf '{}'.", shelf);
+            } else {
+                for f in &files {
+                    println!("  archive://{}", f);
+                }
+                println!("  ({} files)", files.len());
+            }
         }
         Commands::Repl => unreachable!(),
     }
