@@ -343,6 +343,28 @@ mod tests {
     }
 
     #[test]
+    fn fts_survives_reopen() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.sqlite");
+
+        // Insert data in first connection
+        {
+            let store = SqliteStore::open(&db_path).unwrap();
+            store
+                .upsert_doc("knowledge", "rust", &test_doc("rust", "Rust is a systems programming language", ""))
+                .unwrap();
+        }
+
+        // Reopen (triggers DROP + CREATE + rebuild) and verify search still works
+        {
+            let store = SqliteStore::open(&db_path).unwrap();
+            let results = store.search("programming", &SearchOpts::default()).unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].key, "rust");
+        }
+    }
+
+    #[test]
     fn delete_doc() {
         let (_dir, store) = setup();
         store
