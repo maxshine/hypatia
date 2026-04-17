@@ -1,5 +1,6 @@
 /target
 /default
+shelves/
 bench_report*.json
 longmemeval_*.json
 longmemeval_*_results.jsonl

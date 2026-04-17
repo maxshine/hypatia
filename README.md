@@ -364,6 +364,42 @@ LOCOMO_DATA=locomo10.json LOCOMO_RESULTS=results.jsonl \
   cargo test --test locomo --release -- --nocapture
 ```
 
+### LongMemEval Benchmark
+
+Tested on [LongMemEval](https://github.com/xiaowu0162/longmemeval) (500 questions, 7 types, 5 abilities), a comprehensive benchmark for long-term conversational memory.
+
+> **Note**: The test data file (`longmemeval_m.json`, ~2.6 GB) is **not** included in this repository because it is a large third-party public dataset. You need to download it separately before running the benchmark.
+
+#### Download Data
+
+```bash
+# Option 1: Use the download script (recommended)
+pip install httpx
+python3 scripts/longmemeval_download.py              # M variant (default, ~2.6 GB)
+python3 scripts/longmemeval_download.py --variant s   # S variant (smaller)
+
+# Option 2: Direct download from HuggingFace
+curl -L -o longmemeval_m.json \
+  https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_m_cleaned.json
+```
+
+Source: [xiaowu0162/longmemeval-cleaned on HuggingFace](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned)
+
+#### Run the Benchmark
+
+```bash
+# Full run (requires embedding model in ~/.hypatia/default/)
+LONGMEMEVAL_DATA=longmemeval_m.json LONGMEMEVAL_RESULTS=longmemeval_m_results.jsonl \
+  cargo test --test longmemeval --release -- --nocapture
+
+# Quick test with subset
+LONGMEMEVAL_DATA=longmemeval_m.json LONGMEMEVAL_MAX_QUESTIONS=50 LONGMEMEVAL_RESULTS=longmemeval_m_results.jsonl \
+  cargo test --test longmemeval --release -- --nocapture
+
+# Evaluate results
+python3 scripts/longmemeval_eval.py --results longmemeval_m_results.jsonl --retrieval-only
+```
+
 ### Synthetic Benchmark
 
 Benchmark uses synthetic data with planted needles (known-answer entries) to measure retrieval quality, following MemPalace's methodology.
