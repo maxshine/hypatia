@@ -379,3 +379,42 @@ fn print_result(result: &QueryResult) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+    use std::collections::HashMap;
+
+    /// Check every subcommand for duplicate short flags.
+    /// Catches issues like -s being used for both --shelf and --synonyms.
+    #[test]
+    fn no_duplicate_short_flags() {
+        let cmd = Cli::command();
+        check_subcommand(&cmd);
+
+        for sub in cmd.get_subcommands() {
+            check_subcommand(sub);
+            for sub2 in sub.get_subcommands() {
+                check_subcommand(sub2);
+            }
+        }
+    }
+
+    fn check_subcommand(cmd: &clap::Command) {
+        let mut seen: HashMap<char, String> = HashMap::new();
+        for arg in cmd.get_arguments() {
+            if let Some(short) = arg.get_short() {
+                if let Some(prev) = seen.insert(short, arg.get_id().to_string()) {
+                    panic!(
+                        "Command '{}': short flag '-{}' used by both '{}' and '{}'",
+                        cmd.get_name(),
+                        short,
+                        prev,
+                        arg.get_id()
+                    );
+                }
+            }
+        }
+    }
+}
